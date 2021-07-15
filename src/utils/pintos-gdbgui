@@ -1,0 +1,4 @@
+#! /bin/sh
+
+GDBMACROS=~/pintos/src/misc/gdb-macros
+gdbgui -r --gdb-cmd "gdb -x $GDBMACROS" "$@"
