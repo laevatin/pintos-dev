@@ -469,6 +469,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
   t->magic = THREAD_MAGIC;
+  sema_init(&t->sleepsema, 0);
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -585,3 +586,15 @@ allocate_tid (void)
 /* Offset of `stack' member within `struct thread'.
    Used by switch.S, which can't figure it out on its own. */
 uint32_t thread_stack_ofs = offsetof (struct thread, stack);
+
+/* Compares two thread's wakeuptick, used in list_insert_ordered */
+bool 
+thread_wakeuptick_less (const struct list_elem *a,
+                        const struct list_elem *b,
+                        void *aux UNUSED)
+{
+  struct thread *t1 = list_entry (a, struct thread, sleeplistelem);
+  struct thread *t2 = list_entry (b, struct thread, sleeplistelem);
+  
+  return t1->wakeuptick < t2->wakeuptick;
+} 
