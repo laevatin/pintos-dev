@@ -207,8 +207,6 @@ lock_acquire (struct lock *lock)
 {
   int acquirepriority;
   struct thread *cur = thread_current ();
-  struct list_elem *e;
-  int max_priority = PRI_MIN;
 
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
@@ -477,6 +475,7 @@ get_highest_priority_locks (struct thread *t, int depth)
         e2 != list_end (&l->semaphore.waiters);
         e2 = list_next (e2))
         {
+          /* Rather slow */
           struct thread *t1 = list_entry (e2, struct thread, elem);
           int next_prior = get_highest_priority_locks (t1, depth - 1);
           if (next_prior > max_donated) 
