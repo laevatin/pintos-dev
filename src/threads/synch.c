@@ -33,7 +33,7 @@
 #include "threads/thread.h"
 
 static void donate_priority (struct thread *, int depth, int prev_priority);
-static int get_highest_priority_locks (struct thread *t);
+static int get_highest_priority_locks (struct thread *t, int depth);
 static struct thread *pop_highest_priority_thread (struct list *thread_list);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
@@ -113,14 +113,24 @@ void
 sema_up (struct semaphore *sema) 
 {
   enum intr_level old_level;
+  struct thread *t = NULL;
+  int cur_priority;
 
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
   if (!list_empty (&sema->waiters)) 
-    thread_unblock (pop_highest_priority_thread (&sema->waiters));
+  {
+    t = pop_highest_priority_thread (&sema->waiters);
+    thread_unblock (t);
+  }
   sema->value++;
   intr_set_level (old_level);
+
+  cur_priority = thread_get_priority ();
+  if (!intr_context() && is_thread(t) && 
+    (cur_priority < t->donatedpriority || cur_priority < t->priority))
+      thread_yield ();
 }
 
 static void sema_test_helper (void *sema_);
@@ -196,28 +206,30 @@ void
 lock_acquire (struct lock *lock)
 {
   int acquirepriority;
-  struct thread *t = thread_current ();
+  struct thread *cur = thread_current ();
+  struct list_elem *e;
+  int max_priority = PRI_MIN;
 
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
-  acquirepriority = thread_get_priority ();
-  if (acquirepriority > lock->highest_acq_priority)
-    lock->highest_acq_priority = acquirepriority;
+  if (lock->holder && !thread_mlfqs)
+    {
+      acquirepriority = thread_get_priority ();
+      if (acquirepriority > lock->highest_acq_priority)
+        lock->highest_acq_priority = acquirepriority;
 
-  if (lock->holder)
-    t->blockedby = lock->holder;
+      cur->blockedby = lock->holder;
 
-  donate_priority (t, PRI_DONATION_LIMIT, PRI_MIN);
+      donate_priority (cur, PRI_DONATION_LIMIT, PRI_MIN);
+    }
+
   sema_down (&lock->semaphore);
 
-  lock->highest_acq_priority = PRI_MIN;
-  donate_priority (t, PRI_DONATION_LIMIT, PRI_MIN);
-
   lock->holder = thread_current ();
-  list_push_back (&t->holdinglocks, &lock->elem);
-  t->blockedby = NULL;
+  list_push_back (&cur->holdinglocks, &lock->elem);
+  cur->blockedby = NULL;
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -254,13 +266,34 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  struct list_elem *e;
+  int max_priority = PRI_MIN;
+  struct thread *cur = thread_current ();
+
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
   list_remove (&lock->elem);
   lock->holder = NULL;
+  // thread_set_donatedpriority (get_highest_priority_locks (thread_current ()));
+  // printf ("lock_release: %d\n", thread_current ()->donatedpriority);
+  
+  for (e = list_begin (&lock->semaphore.waiters); 
+    e != list_end (&lock->semaphore.waiters);
+    e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->priority > max_priority)
+        max_priority = t->priority;
+      if (t->donatedpriority > max_priority) 
+        max_priority = t->donatedpriority;
+    }
+
+  lock->highest_acq_priority = max_priority;
+  donate_priority (cur, PRI_DONATION_LIMIT, PRI_MIN);
+
   sema_up (&lock->semaphore);
-  thread_set_donatedpriority (get_highest_priority_locks (thread_current ()));
+  
 }
 
 /* Returns true if the current thread holds LOCK, false
@@ -339,14 +372,44 @@ cond_wait (struct condition *cond, struct lock *lock)
 void
 cond_signal (struct condition *cond, struct lock *lock UNUSED) 
 {
+  struct list_elem *e1, *e2;
+  struct list_elem *max_e;
+  struct semaphore *sema_max_priority;
+  int max_priority = PRI_MIN;
+
   ASSERT (cond != NULL);
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (lock_held_by_current_thread (lock));
 
   if (!list_empty (&cond->waiters)) 
-    sema_up (&list_entry (list_pop_front (&cond->waiters),
-                          struct semaphore_elem, elem)->semaphore);
+    {
+      max_e = list_begin (&cond->waiters);
+      sema_max_priority = &list_entry (max_e, struct semaphore_elem, elem)->semaphore;
+      for (e1 = list_begin (&cond->waiters); e1 != list_end (&cond->waiters);
+        e1 = list_next (e1))
+        {
+          struct semaphore *sema = &list_entry (e1, struct semaphore_elem, elem)->semaphore;
+          
+          for (e2 = list_begin (&sema->waiters); e2 != list_end (&sema->waiters);
+            e2 = list_next (e2))
+            {
+              struct thread *t = list_entry (e2, struct thread, elem);
+              int priority = t->priority;
+              if (t->donatedpriority > priority)
+                priority = t->donatedpriority;
+              if (priority > max_priority) 
+                {
+                  max_priority = priority;
+                  sema_max_priority = sema;
+                  max_e = e1;
+                }
+            }
+        }
+      list_remove (max_e);
+      sema_up (sema_max_priority);
+    }
+
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by
@@ -374,10 +437,10 @@ donate_priority (struct thread *t, int depth, int prev_priority)
 
   if (depth <= 0 || !is_thread(t)) 
     return;
-  
+  enum intr_level old_level = intr_disable ();
   // if (t->status != THREAD_BLOCKED) 
   //   return;
-  t->donatedpriority = get_highest_priority_locks (t);
+  t->donatedpriority = get_highest_priority_locks (t, PRI_DONATION_LIMIT);
 
   /* priority = max(prev_priority, t->donatedpriority, t->priority) */
   if (t->donatedpriority < prev_priority)
@@ -387,24 +450,38 @@ donate_priority (struct thread *t, int depth, int prev_priority)
 
   if (t->priority > priority)
     priority = t->priority;
-
+  
+  intr_set_level (old_level);
   return donate_priority (t->blockedby, depth - 1, priority);
 }
 
 /* Get the highest acquiring priority in the holding locks 
   if the thread is not holding any locks, return PRI_MIN. */
 static int
-get_highest_priority_locks (struct thread *t)
+get_highest_priority_locks (struct thread *t, int depth)
 {
-  struct list_elem *e;
+  struct list_elem *e1, *e2;
   int max_donated = PRI_MIN;
+  
+  if (depth <= 0) 
+    return PRI_MIN;
 
-  for (e = list_begin (&t->holdinglocks); e != list_end (&t->holdinglocks);
-    e = list_next (e))
+  for (e1 = list_begin (&t->holdinglocks); e1 != list_end (&t->holdinglocks);
+    e1 = list_next (e1))
     {
-      struct lock *l = list_entry (e, struct lock, elem);
+      struct lock *l = list_entry (e1, struct lock, elem);
       if (l->highest_acq_priority > max_donated)
         max_donated = l->highest_acq_priority;
+      
+      for (e2 = list_begin (&l->semaphore.waiters); 
+        e2 != list_end (&l->semaphore.waiters);
+        e2 = list_next (e2))
+        {
+          struct thread *t1 = list_entry (e2, struct thread, elem);
+          int next_prior = get_highest_priority_locks (t1, depth - 1);
+          if (next_prior > max_donated) 
+            max_donated = next_prior;
+        }
     }
   
   return max_donated;

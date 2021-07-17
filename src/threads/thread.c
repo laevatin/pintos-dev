@@ -369,21 +369,21 @@ current thread no longer has the highest priority, yields. */
 void
 thread_set_donatedpriority (int new_priority) 
 {
-  struct list_elem *e;
-  int cur_priority;
+  // struct list_elem *e;
+  // int cur_priority;
   thread_current ()->donatedpriority = new_priority;
-  cur_priority = thread_get_priority ();
+  // cur_priority = thread_get_priority ();
 
-  for (e = list_begin (&ready_list); e != list_end (&ready_list);
-      e = list_next (e))
-    {
-      struct thread *t = list_entry (e, struct thread, elem);
-      if (t->priority > cur_priority || t->donatedpriority > cur_priority) 
-        {
-          thread_yield ();
-          break;
-        }
-    }
+  // for (e = list_begin (&ready_list); e != list_end (&ready_list);
+  //     e = list_next (e))
+  //   {
+  //     struct thread *t = list_entry (e, struct thread, elem);
+  //     if (t->priority > cur_priority || t->donatedpriority > cur_priority) 
+  //       {
+  //         thread_yield ();
+  //         break;
+  //       }
+  //   }
 }
 
 /* Returns the current thread's priority. */
