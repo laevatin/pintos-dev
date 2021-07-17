@@ -89,22 +89,22 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
+    int donatedpriority;                /* Priority donated by other threads */
     struct list_elem allelem;           /* List element for all threads list. */
+    struct list_elem sleeplistelem;     /* List element for sleeping list. */
+    int64_t wakeuptick;                 /* The tick the thread wake up */
+    struct semaphore sleepsema;         /* Semaphore for blocking thread */
+    /* The thread holding resources acquired by this thread */
+    struct thread *blockedby;           
+    struct list holdinglocks;           /* Locks holding by the thread */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
-    struct list_elem sleeplistelem;     /* List element for sleeping list. */
-
+    
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
 #endif
-
-    /* The tick when the thread would be wake up */
-   uint64_t wakeuptick;
-
-    /* Semaphore for blocking thread when sleeping */
-   struct semaphore sleepsema;
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
@@ -140,6 +140,7 @@ void thread_foreach (thread_action_func *, void *);
 
 int thread_get_priority (void);
 void thread_set_priority (int);
+void thread_set_donatedpriority (int);
 
 int thread_get_nice (void);
 void thread_set_nice (int);
@@ -150,4 +151,5 @@ bool thread_wakeuptick_less (const struct list_elem *a,
                              const struct list_elem *b,
                              void *aux UNUSED);
 
+bool is_thread (struct thread *);
 #endif /* threads/thread.h */

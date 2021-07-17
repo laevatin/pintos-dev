@@ -65,7 +65,7 @@ static void idle (void *aux UNUSED);
 static struct thread *running_thread (void);
 static struct thread *next_thread_to_run (void);
 static void init_thread (struct thread *, const char *name, int priority);
-static bool is_thread (struct thread *) UNUSED;
+bool is_thread (struct thread *) UNUSED;
 static void *alloc_frame (struct thread *, size_t size);
 static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
@@ -209,6 +209,9 @@ thread_create (const char *name, int priority,
   /* Add to run queue. */
   thread_unblock (t);
 
+  if (priority > thread_get_priority ()) 
+    thread_yield ();
+
   return tid;
 }
 
@@ -298,7 +301,7 @@ thread_exit (void)
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
   intr_disable ();
-  list_remove (&thread_current()->allelem);
+  list_remove (&thread_current ()->allelem);
   thread_current ()->status = THREAD_DYING;
   schedule ();
   NOT_REACHED ();
@@ -339,18 +342,56 @@ thread_foreach (thread_action_func *func, void *aux)
     }
 }
 
-/* Sets the current thread's priority to NEW_PRIORITY. */
+/* Sets the current thread's priority to NEW_PRIORITY. if the current thread
+no longer has the highest priority, yields. */
 void
 thread_set_priority (int new_priority) 
 {
+  struct list_elem *e;
+  int cur_priority;
   thread_current ()->priority = new_priority;
+  cur_priority = thread_get_priority ();
+
+  for (e = list_begin (&ready_list); e != list_end (&ready_list);
+      e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->priority > cur_priority || t->donatedpriority > cur_priority) 
+        {
+          thread_yield ();
+          break;
+        }
+    }
+}
+
+/* Sets the current thread's donatedpriority to NEW_PRIORITY. if the 
+current thread no longer has the highest priority, yields. */
+void
+thread_set_donatedpriority (int new_priority) 
+{
+  struct list_elem *e;
+  int cur_priority;
+  thread_current ()->donatedpriority = new_priority;
+  cur_priority = thread_get_priority ();
+
+  for (e = list_begin (&ready_list); e != list_end (&ready_list);
+      e = list_next (e))
+    {
+      struct thread *t = list_entry (e, struct thread, elem);
+      if (t->priority > cur_priority || t->donatedpriority > cur_priority) 
+        {
+          thread_yield ();
+          break;
+        }
+    }
 }
 
 /* Returns the current thread's priority. */
 int
 thread_get_priority (void) 
 {
-  return thread_current ()->priority;
+  struct thread *t = thread_current ();
+  return t->priority > t->donatedpriority ? t->priority : t->donatedpriority;
 }
 
 /* Sets the current thread's nice value to NICE. */
@@ -448,7 +489,7 @@ running_thread (void)
 }
 
 /* Returns true if T appears to point to a valid thread. */
-static bool
+bool
 is_thread (struct thread *t)
 {
   return t != NULL && t->magic == THREAD_MAGIC;
@@ -468,8 +509,11 @@ init_thread (struct thread *t, const char *name, int priority)
   strlcpy (t->name, name, sizeof t->name);
   t->stack = (uint8_t *) t + PGSIZE;
   t->priority = priority;
+  t->donatedpriority = PRI_MIN;
+  t->blockedby = NULL;
   t->magic = THREAD_MAGIC;
-  sema_init(&t->sleepsema, 0);
+  list_init (&t->holdinglocks);
+  sema_init (&t->sleepsema, 0);
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -497,7 +541,28 @@ next_thread_to_run (void)
   if (list_empty (&ready_list))
     return idle_thread;
   else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+    {
+      struct list_elem *e = list_begin (&ready_list);
+      struct list_elem *max_e = e;
+      struct thread *next = list_entry (e, struct thread, elem);
+      int max_priority = PRI_MIN;
+      for (; e != list_end (&ready_list); e = list_next (e))
+        {
+          struct thread *t = list_entry (e, struct thread, elem);
+          int priority = t->priority;
+          if (t->donatedpriority > priority) 
+            priority = t->donatedpriority;
+
+          if (priority > max_priority)
+            {
+              max_priority = priority;
+              next = t;
+              max_e = e;
+            }
+        }
+      list_remove (max_e);
+      return next;
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
