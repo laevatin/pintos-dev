@@ -7,6 +7,7 @@
 #include "threads/interrupt.h"
 #include "threads/synch.h"
 #include "threads/thread.h"
+#include "threads/fixed-point.h"
   
 /* See [8254] for hardware details of the 8254 timer chip. */
 
@@ -199,6 +200,21 @@ timer_interrupt (struct intr_frame *args UNUSED)
       
       list_pop_front(&sleeping_list);
       sema_up(&t->sleepsema);
+    }
+  
+  if (thread_mlfqs) 
+    {
+      struct thread *t = thread_current ();
+      t->recent_cpu = FADDI (t->recent_cpu, 1);
+      
+      if ((timer_ticks () % TIMER_FREQ) == 0)
+        {
+          update_sys_load_avg ();
+          update_thread_recent_cpu ();
+        }
+      
+      if (ticks % 4 == 0)
+        update_thread_priority ();
     }
 }
 

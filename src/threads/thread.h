@@ -24,6 +24,8 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+#define NICE_MIN -20                    /* Lowest nice. */
+#define NICE_MAX 20                     /* Highest nice. */
 
 /* A kernel thread or user process.
 
@@ -98,6 +100,10 @@ struct thread
     struct thread *blockedby;           
     struct list holdinglocks;           /* Locks holding by the thread */
 
+    /* 4.4BSD Scheduler */
+    int nice;                           /* Niceness of the thread */
+    int recent_cpu;                   /* */
+
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
     
@@ -148,6 +154,10 @@ void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
 
+void update_sys_load_avg (void);
+void update_thread_recent_cpu (void);
+void update_thread_priority (void);
+
 bool thread_wakeuptick_less (const struct list_elem *a,
                              const struct list_elem *b,
                              void *aux UNUSED);
@@ -155,6 +165,9 @@ bool thread_wakeuptick_less (const struct list_elem *a,
 bool thread_priority_higher (const struct list_elem *a, 
                              const struct list_elem *b, 
                              void *aux UNUSED);
+                           
+struct thread *highest_priority_thread (struct list *thread_list,
+                                                       bool delete);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */

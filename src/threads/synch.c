@@ -34,8 +34,6 @@
 
 static void donate_priority (struct thread *, int depth, int prev_priority);
 static int get_highest_priority_locks (struct thread *t, int depth);
-static struct thread *highest_priority_thread (struct list *thread_list, 
-                                                        bool delete);
 static void set_lock_highest_acq_priority (struct lock *lock);
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
@@ -470,34 +468,6 @@ get_highest_priority_locks (struct thread *t, int depth)
     }
   
   return max_donated;
-}
-
-/* Pop the thread with highest priority in the given list */
-static struct thread *
-highest_priority_thread (struct list *thread_list, bool delete)
-{
-  struct list_elem *e = list_begin (thread_list);
-  struct list_elem *max_e = e;
-  int max_priority = PRI_MIN;
-  struct thread *highest_priority = list_entry (e, struct thread, elem);
-
-  ASSERT (!list_empty (thread_list));
-
-  for (; e != list_end (thread_list); e = list_next (e))
-    {
-      struct thread *t = list_entry (e, struct thread, elem);
-      int priority = thread_get_priority_thread (t);
-      if (priority > max_priority)
-        {
-          max_priority = priority;
-          highest_priority = t;
-          max_e = e;
-        }
-    }
-  
-  if (delete)
-    list_remove (max_e);
-  return highest_priority;
 }
 
 /* Set a lock's highest acquiring priority */
