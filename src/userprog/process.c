@@ -50,9 +50,17 @@ process_execute (const char *file_name)
 static void
 start_process (void *file_name_)
 {
-  char *file_name = file_name_;
+  char *file_name;
   struct intr_frame if_;
   bool success;
+  char *token, *save_ptr, **buf;
+  char *stack_pointer, *aligned_pointer;
+  uint32_t pointer_as_int;
+  int idx = 0, argc;
+  char **argv;
+
+  /* Tokenize the input to filename and arguments */
+  file_name = strtok_r (file_name_, " ", &save_ptr);
 
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
@@ -62,9 +70,58 @@ start_process (void *file_name_)
   success = load (file_name, &if_.eip, &if_.esp);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success) 
-    thread_exit ();
+    {
+      palloc_free_page (file_name_);
+      thread_exit ();
+    }
+  
+  stack_pointer = if_.esp;
+  buf = palloc_get_page (0);
+  stack_pointer -= (strlen (file_name) + 1);
+  strlcpy (stack_pointer, file_name, 4096);
+  buf[idx++] = stack_pointer;
+
+  /* Put the args to the stack */
+  for (token = strtok_r (NULL, " ", &save_ptr); token != NULL;
+        token = strtok_r (NULL, " ", &save_ptr))
+    {
+      /* strlen may cause page fault when there is no '\0' */
+      stack_pointer -= (strlen (token) + 1);
+      strlcpy (stack_pointer, token, 4096);
+      buf[idx++] = stack_pointer;
+    }
+
+  buf[idx] = NULL;
+  argc = idx;
+
+  /* Word-align */
+  pointer_as_int = (uint32_t)stack_pointer;
+  aligned_pointer = (char *)((pointer_as_int / 4) * 4);
+  memset (aligned_pointer, 0, pointer_as_int - (uint32_t)aligned_pointer);
+  stack_pointer = aligned_pointer;
+
+  /* Push the pointers to the stack. */
+  for (; idx >= 0; idx--) 
+    {
+      stack_pointer -= 4;
+      *((char **)stack_pointer) = buf[idx];
+    }
+  
+  /* Push the argv pointer */
+  argv = (char **)stack_pointer;
+  stack_pointer -= 4;
+  *((char ***)stack_pointer) = argv;
+
+  /* Push the argc */
+  stack_pointer -= 4;
+  *((int *)stack_pointer) = argc;
+
+  /* Return address (not used) */
+  stack_pointer -= 4;
+  *((int *)stack_pointer) = 0;
+  
+  palloc_free_page (file_name_);
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
