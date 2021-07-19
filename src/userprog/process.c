@@ -81,7 +81,6 @@ start_process (void *file_name_)
   stack_pointer -= (strlen (file_name) + 1);
   strlcpy (stack_pointer, file_name, 4096);
   buf[idx++] = stack_pointer;
-
   /* Put the args to the stack */
   for (token = strtok_r (NULL, " ", &save_ptr); token != NULL;
         token = strtok_r (NULL, " ", &save_ptr))
@@ -120,6 +119,8 @@ start_process (void *file_name_)
   /* Return address (not used) */
   stack_pointer -= 4;
   *((int *)stack_pointer) = 0;
+
+  if_.esp = stack_pointer;
   
   palloc_free_page (file_name_);
 
@@ -143,8 +144,13 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
+  struct thread *t = get_thread (child_tid);
+
+  while (1)
+    barrier ();
+
   return -1;
 }
 

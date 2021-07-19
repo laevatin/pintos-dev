@@ -26,7 +26,7 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 #define NICE_MIN -20                    /* Lowest nice. */
 #define NICE_MAX 20                     /* Highest nice. */
-
+#define USERPROG
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -102,7 +102,7 @@ struct thread
 
     /* 4.4BSD Scheduler */
     int nice;                           /* Niceness of the thread */
-    int recent_cpu;                   /* */
+    int recent_cpu;                     /* Recent cpu usage of the thread */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -168,6 +168,8 @@ bool thread_priority_higher (const struct list_elem *a,
                            
 struct thread *highest_priority_thread (struct list *thread_list,
                                                        bool delete);
+
+struct thread *get_thread (tid_t threadtid);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */

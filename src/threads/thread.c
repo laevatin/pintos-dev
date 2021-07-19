@@ -743,3 +743,20 @@ highest_priority_thread (struct list *thread_list, bool delete)
     list_remove (max_e);
   return highest_priority;
 }
+
+/* Get the thread with thread tid `threadtid`. Returns NULL on error */
+struct thread *
+get_thread (tid_t threadtid)
+{
+  struct thread *t = NULL;
+  struct list_elem *e = list_begin (&all_list);
+
+  for (; e != list_end (&all_list); e = list_next (e))
+    {
+      t = list_entry (e, struct thread, allelem);
+      if (t->tid == threadtid)
+        return t;
+    }
+
+  return NULL;   
+}
