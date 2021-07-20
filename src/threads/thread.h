@@ -26,7 +26,15 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 #define NICE_MIN -20                    /* Lowest nice. */
 #define NICE_MAX 20                     /* Highest nice. */
-#define USERPROG
+// #define USERPROG
+/* Used in the openfds list in thread.h*/
+struct filefd 
+  {
+    struct file *f;
+    int fd;
+    struct list_elem elem;
+  };
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -110,6 +118,25 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+   
+   /* File descriptors opened by the thread. */
+    struct list openfds;
+    int nextfd;
+    
+    /* For process_wait and exit */
+    struct list child_threads;
+    struct list_elem child_elem;
+    struct thread *parent;
+    int return_status;
+    struct semaphore wait_child_sema;
+    bool exited;
+
+    /* For process_execute */
+    struct semaphore wait_load;
+    bool load_success;
+
+    struct file *elf; 
+
 #endif
 
     /* Owned by thread.c. */
@@ -169,7 +196,14 @@ bool thread_priority_higher (const struct list_elem *a,
 struct thread *highest_priority_thread (struct list *thread_list,
                                                        bool delete);
 
-struct thread *get_thread (tid_t threadtid);
+struct thread *get_child_thread (struct thread *t, tid_t threadtid);
+void remove_child_thread (struct thread *t, tid_t threadtid);
+
+struct filefd *thread_get_filefd (struct thread *t, int fd);
+struct file *thread_get_file (struct thread *t, int fd);
+int thread_add_file (struct thread *t, struct file *f);
+void thread_remove_file (struct thread *t, int fd);
+int thread_nextfd (struct thread *t);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */

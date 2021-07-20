@@ -8,6 +8,7 @@
 #include "userprog/gdt.h"
 #include "userprog/pagedir.h"
 #include "userprog/tss.h"
+#include "userprog/syscall.h"
 #include "filesys/directory.h"
 #include "filesys/file.h"
 #include "filesys/filesys.h"
@@ -20,7 +21,9 @@
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+static void clear_children_parent (struct thread *t);
 
+extern struct lock file_lock;
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -30,18 +33,32 @@ process_execute (const char *file_name)
 {
   char *fn_copy;
   tid_t tid;
+  struct thread *t;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
   fn_copy = palloc_get_page (0);
   if (fn_copy == NULL)
     return TID_ERROR;
+  
+  /* File name too long. */
+  if (strlen (file_name) + 1 > PGSIZE)
+    return -1;
+
   strlcpy (fn_copy, file_name, PGSIZE);
 
   /* Create a new thread to execute FILE_NAME. */
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+
+  /* Wait to see if the child thread is loaded properly */
+  t = get_child_thread (thread_current (), tid);
+  sema_down (&t->wait_load);
+  if (!t->load_success)
+    tid = TID_ERROR;
+
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
   return tid;
 }
 
@@ -51,6 +68,7 @@ static void
 start_process (void *file_name_)
 {
   char *file_name;
+  struct thread *t = thread_current ();
   struct intr_frame if_;
   bool success;
   char *token, *save_ptr, **buf;
@@ -72,7 +90,8 @@ start_process (void *file_name_)
   /* If load failed, quit. */
   if (!success) 
     {
-      palloc_free_page (file_name_);
+      t->load_success = false;
+      sema_up (&t->wait_load);
       thread_exit ();
     }
   
@@ -121,7 +140,15 @@ start_process (void *file_name_)
   *((int *)stack_pointer) = 0;
 
   if_.esp = stack_pointer;
-  
+
+  t->load_success = true;
+  sema_up (&t->wait_load);
+
+  lock_acquire (&file_lock);
+  t->elf = filesys_open (file_name);
+  file_deny_write (t->elf);
+  lock_release (&file_lock);
+
   palloc_free_page (file_name_);
 
   /* Start the user process by simulating a return from an
@@ -146,12 +173,26 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid) 
 {
-  struct thread *t = get_thread (child_tid);
+  struct thread *cur = thread_current ();
+  struct thread *child = get_child_thread (cur, child_tid);
+  int ret_status;
 
-  while (1)
-    barrier ();
+  if (!child)
+    return -1;
 
-  return -1;
+  if (child->exited)
+    {
+      ret_status = child->return_status;
+      remove_child_thread (cur, child_tid);
+      return ret_status;
+    }
+  
+  /* Keep waiting utill the child is exited. */
+  sema_down (&child->wait_child_sema);
+  ret_status = child->return_status;
+  remove_child_thread (cur, child_tid);
+
+  return ret_status;
 }
 
 /* Free the current process's resources. */
@@ -160,6 +201,25 @@ process_exit (void)
 {
   struct thread *cur = thread_current ();
   uint32_t *pd;
+  char *dummy;
+  enum intr_level old_level;
+
+  close_all_file (cur);
+  clear_children_parent (cur);
+
+  strtok_r (cur->name, " ", &dummy);
+  printf ("%s: exit(%d)\n", cur->name, cur->return_status);
+
+  /* RELEASE ALL THE LOCKS */
+
+  if (cur->elf)
+    {
+      if (!lock_held_by_current_thread (&file_lock))
+        lock_acquire (&file_lock);
+      file_allow_write (cur->elf);
+      file_close (cur->elf);
+      lock_release (&file_lock);
+    }
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -177,6 +237,16 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+  
+  /* Keep synchronized */
+  old_level = intr_disable ();
+
+  cur->exited = true;
+  sema_up (&cur->wait_child_sema);
+  if (cur->parent)
+    thread_block ();
+
+  intr_set_level (old_level);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -285,7 +355,10 @@ load (const char *file_name, void (**eip) (void), void **esp)
   process_activate ();
 
   /* Open executable file. */
+  lock_acquire (&file_lock);
   file = filesys_open (file_name);
+  lock_release (&file_lock);
+
   if (file == NULL) 
     {
       printf ("load: %s: open failed\n", file_name);
@@ -525,4 +598,23 @@ install_page (void *upage, void *kpage, bool writable)
      address, then map our page there. */
   return (pagedir_get_page (t->pagedir, upage) == NULL
           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+}
+
+
+/* Set all children's parent to NULL. If a child is exited, unblock it. */
+static void
+clear_children_parent (struct thread *t)
+{
+  struct list_elem *e;
+
+  for (e = list_begin (&t->child_threads); e != list_end (&t->child_threads);
+    e = list_next (e))
+    {
+      struct thread *child = list_entry (e, struct thread, child_elem);
+
+      if (child->exited)
+        thread_unblock (child);
+      else 
+        child->parent = NULL;
+    }
 }

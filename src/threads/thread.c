@@ -8,12 +8,15 @@
 #include "threads/interrupt.h"
 #include "threads/intr-stubs.h"
 #include "threads/palloc.h"
+#include "threads/malloc.h"
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
 #include "fixed-point.h"
+#include "filesys/file.h"
 #ifdef USERPROG
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #endif
 
 /* Random value for struct thread's `magic' member.
@@ -209,6 +212,12 @@ thread_create (const char *name, int priority,
   sf = alloc_frame (t, sizeof *sf);
   sf->eip = switch_entry;
   sf->ebp = 0;
+
+#ifdef USERPROG
+  t->parent = thread_current ();
+  list_push_back (&t->parent->child_threads, &t->child_elem);
+
+#endif
 
   intr_set_level (old_level);
 
@@ -575,6 +584,18 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   list_init (&t->holdinglocks);
   sema_init (&t->sleepsema, 0);
+
+#ifdef USERPROG
+  t->nextfd = 2;
+  t->exited = false;
+  t->return_status = -1;
+  t->elf = NULL;
+  list_init (&t->openfds);
+  list_init (&t->child_threads);
+  sema_init (&t->wait_child_sema, 0);
+  sema_init (&t->wait_load, 0);
+#endif
+
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -746,17 +767,95 @@ highest_priority_thread (struct list *thread_list, bool delete)
 
 /* Get the thread with thread tid `threadtid`. Returns NULL on error */
 struct thread *
-get_thread (tid_t threadtid)
+get_child_thread (struct thread *t, tid_t threadtid)
 {
-  struct thread *t = NULL;
-  struct list_elem *e = list_begin (&all_list);
+  struct thread *child = NULL;
+  struct list_elem *e = list_begin (&t->child_threads);
 
-  for (; e != list_end (&all_list); e = list_next (e))
+  for (; e != list_end (&t->child_threads); e = list_next (e))
     {
-      t = list_entry (e, struct thread, allelem);
-      if (t->tid == threadtid)
-        return t;
+      child = list_entry (e, struct thread, child_elem);
+      if (child->tid == threadtid)
+        return child;
     }
 
   return NULL;   
 }
+
+/* Removes the child thread from the child_list. 
+  Child thread must be exited and this also unblocks the
+  child thread to let it exit completely. */
+void
+remove_child_thread (struct thread *t, tid_t threadtid)
+{
+  struct thread *child = get_child_thread (t, threadtid);
+
+  ASSERT (child->exited);
+  ASSERT (child->status == THREAD_BLOCKED)
+
+  thread_unblock (child);
+  list_remove (&child->child_elem);
+}
+
+#ifdef USERPROG
+/* Get the next file descriptor in thread t. */
+int 
+thread_nextfd (struct thread *t)
+{
+  return t->nextfd++;
+}
+
+/* Get the filefd with file descriptor fd opened by thread t, 
+  returns NULL if not found. */
+struct filefd *
+thread_get_filefd (struct thread *t, int fd)
+{
+  struct list_elem *e;
+  struct filefd *ffd;
+
+  for (e = list_begin (&t->openfds); e != list_end (&t->openfds);
+    e = list_next (e))
+    {
+      ffd = list_entry (e, struct filefd, elem);
+      if (ffd->fd == fd)
+        return ffd;
+    }
+  
+  return NULL;
+}
+
+/* Get the file with file descriptor fd opened by thread t, 
+  returns NULL if not found */
+struct file *
+thread_get_file (struct thread *t, int fd)
+{
+  struct filefd *ffd = thread_get_filefd (t, fd);
+  if (!ffd)
+    return NULL;
+  return ffd->f;
+}
+
+/* Add a file to thread t's openfds. Returns the new fd. */
+int 
+thread_add_file (struct thread *t, struct file *f)
+{
+  struct filefd *ffd = malloc (sizeof (struct filefd));
+  ffd->f = f;
+  ffd->fd = thread_nextfd (t);
+  list_push_back (&t->openfds, &ffd->elem);
+
+  return ffd->fd;
+}
+
+/* Remove the file in the openfd list of thread t. */
+void
+thread_remove_file (struct thread *t, int fd)
+{
+  struct filefd *ffd = thread_get_filefd (t, fd);
+  if (!ffd)
+    return;
+  
+  list_remove (&ffd->elem);
+  free (ffd);
+}
+#endif
