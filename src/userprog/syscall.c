@@ -313,7 +313,6 @@ void
 close_all_file (struct thread *t)
 {
   struct list *filelist = &t->openfds;
-  int count = 0;
 
   while (!list_empty (filelist))
     {
@@ -327,8 +326,6 @@ close_all_file (struct thread *t)
       lock_release (&file_lock);
 
       free (ffd);
-      count ++;
     }
-  
-  printf ("closed %d files in thread %s.\n", count, t->name);
+
 }

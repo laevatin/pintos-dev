@@ -149,6 +149,7 @@ start_process (void *file_name_)
   file_deny_write (t->elf);
   lock_release (&file_lock);
 
+  palloc_free_page (buf);
   palloc_free_page (file_name_);
 
   /* Start the user process by simulating a return from an
