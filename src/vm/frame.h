@@ -3,11 +3,9 @@
 
 #include "lib/kernel/hash.h"
 #include "threads/palloc.h"
-#include "threads/malloc.h"
-#include "threads/synch.h"
 
-void frame_init ();
-void *frame_get_page (enum palloc_flags flags);
-
+void frame_init (void);
+void *frame_get_page (void *uaddr, enum palloc_flags flags);
+void frame_free_page (void *kaddr);
 
 #endif
