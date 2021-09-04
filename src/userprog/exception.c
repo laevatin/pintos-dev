@@ -5,6 +5,10 @@
 #include "userprog/syscall.h"
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include "userprog/pagedir.h"
+#include "vm/page.h"
+
+#define STACK_SIZE 0x800000
 
 /* Number of page faults processed. */
 static long long page_fault_cnt;
@@ -126,7 +130,10 @@ page_fault (struct intr_frame *f)
   bool not_present;  /* True: not-present page, false: writing r/o page. */
   bool write;        /* True: access was write, false: access was read. */
   bool user;         /* True: access by user, false: access by kernel. */
-  void *fault_addr;  /* Fault address. */
+  uint32_t fault_addr;  /* Fault address. */
+  void *fault_page;
+  bool is_valid_stack;
+  struct thread *t = thread_current ();
 
   /* Obtain faulting address, the virtual address that was
      accessed to cause the fault.  It may point to code or to
@@ -149,13 +156,29 @@ page_fault (struct intr_frame *f)
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
 
-  if (not_present || (is_kernel_vaddr (fault_addr) && user))
+  /* Stack growth */
+  is_valid_stack = ((uint32_t)f->esp <= fault_addr + 32) 
+                    && (((unsigned)PHYS_BASE) - fault_addr <= STACK_SIZE)
+                    && (fault_addr < ((unsigned)PHYS_BASE));
+  
+  fault_page = pg_round_down ((void *)fault_addr);
+  if (is_valid_stack && !supt_look_up (t->supt, fault_page))
+    supt_install_page (t->supt, fault_page, NULL, PG_ZERO); 
+  
+  if (is_user_vaddr (fault_page) && supt_load_page (t->supt, fault_page))
+    return;
+
+  if (not_present || (is_kernel_vaddr (fault_page) && user))
     exit (-1);
+
+  /* Kernel page fault */
+  f->eip = (void *)f->eax;
+  f->eax = -1;
 
   /* To implement virtual memory, delete the rest of the function
      body, and replace it with code that brings in the page to
      which fault_addr refers. */
-  printf ("Page fault at %p: %s error %s page in %s context.\n",
+  printf ("Page fault at %u: %s error %s page in %s context.\n",
           fault_addr,
           not_present ? "not present" : "rights violation",
           write ? "writing" : "reading",

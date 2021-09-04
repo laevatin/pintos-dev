@@ -93,7 +93,7 @@ frame_free_page (void *kaddr)
   e = hash_delete (&frame_table, &f.elem);
   lock_release (&frame_lock);
   
-  ASSERT (!e);
+  ASSERT (e);
 
   palloc_free_page (kaddr);
   free (hash_entry (e, struct frame_entry, elem));

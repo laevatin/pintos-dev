@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "synch.h"
+#include "vm/page.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -137,6 +138,11 @@ struct thread
 
     struct file *elf; 
 
+#endif
+
+#ifdef VM
+    /* Since there is only one thread per user process */
+    struct supt_table *supt;            /* Only effective on user programs. */
 #endif
 
     /* Owned by thread.c. */
