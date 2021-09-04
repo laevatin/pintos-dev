@@ -157,7 +157,8 @@ page_fault (struct intr_frame *f)
   user = (f->error_code & PF_U) != 0;
 
   /* Stack growth */
-  is_valid_stack = ((uint32_t)f->esp <= fault_addr + 32) 
+  is_valid_stack = (((uint32_t)f->esp <= fault_addr + 32) 
+                  || (uint32_t)t->esp <= fault_addr + 32)
                     && (((unsigned)PHYS_BASE) - fault_addr <= STACK_SIZE)
                     && (fault_addr < ((unsigned)PHYS_BASE));
   
@@ -168,7 +169,7 @@ page_fault (struct intr_frame *f)
   if (is_user_vaddr (fault_page) && supt_load_page (t->supt, fault_page))
     return;
 
-  if (not_present || (is_kernel_vaddr (fault_page) && user))
+  if (not_present || (is_kernel_vaddr (fault_page) && user) || write)
     exit (-1);
 
   /* Kernel page fault */

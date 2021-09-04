@@ -124,6 +124,10 @@ supt_load_page (struct supt_table *table, void *uaddr)
     return false;
 
   entry = hash_entry (e, struct supt_entry, elem);
+
+  /* Read-only write access caused the situation */
+  if (entry->state == PG_IN_MEM)
+    return false;
   
   ASSERT (entry->state != PG_IN_MEM);
 

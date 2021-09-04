@@ -39,6 +39,7 @@ syscall_handler (struct intr_frame *f)
 {
   // printf ("system call!\n");
   int *sp = f->esp;
+  thread_current ()->esp = f->esp;
   
   check_frame (f);
   

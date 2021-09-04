@@ -144,6 +144,7 @@ struct thread
     /* Since there is only one thread per user process */
     struct supt_table *supt;            /* Only effective on user programs. */
 #endif
+    void *esp;                          /* Saved esp when in kernel mode */
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
