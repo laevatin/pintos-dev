@@ -40,5 +40,6 @@ bool supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
                           enum page_state state);
 bool supt_look_up (struct supt_table *table, void *uaddr);
 bool supt_load_page (struct supt_table *table, void *uaddr);
+bool supt_set_swap (struct supt_table *table, void *uaddr);
 
 #endif

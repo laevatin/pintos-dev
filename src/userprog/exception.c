@@ -155,13 +155,18 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
-
-  /* Stack growth */
-  is_valid_stack = (((uint32_t)f->esp <= fault_addr + 32) 
-                  || (uint32_t)t->esp <= fault_addr + 32)
-                    && (((unsigned)PHYS_BASE) - fault_addr <= STACK_SIZE)
-                    && (fault_addr < ((unsigned)PHYS_BASE));
   
+  /* Stack growth */
+  is_valid_stack = (((unsigned)PHYS_BASE) - fault_addr <= STACK_SIZE)
+                    && (fault_addr < ((unsigned)PHYS_BASE));
+
+  if (t->esp != NULL)
+    is_valid_stack = is_valid_stack && 
+                      ((uint32_t)t->esp <= fault_addr + 32);
+  else 
+    is_valid_stack = is_valid_stack &&
+                      ((uint32_t)f->esp <= fault_addr + 32);
+
   fault_page = pg_round_down ((void *)fault_addr);
   if (is_valid_stack && !supt_look_up (t->supt, fault_page))
     supt_install_page (t->supt, fault_page, NULL, PG_ZERO); 

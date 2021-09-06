@@ -7,6 +7,7 @@
 #include "threads/pte.h"
 #include "frame.h"
 #include "userprog/pagedir.h"
+#include <stdio.h>
 
 /* hash functions */
 static unsigned 
@@ -67,6 +68,9 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
 
   ASSERT (table);
   ASSERT (entry);
+
+  ASSERT (uaddr == pg_round_down (uaddr));
+  // printf ("load: %p \n", uaddr);
     
   entry->uaddr = uaddr;
   entry->swap_sector = -1;
@@ -125,14 +129,21 @@ supt_load_page (struct supt_table *table, void *uaddr)
 
   entry = hash_entry (e, struct supt_entry, elem);
 
-  /* Read-only write access caused the situation */
-  if (entry->state == PG_IN_MEM)
-    return false;
-  
-  ASSERT (entry->state != PG_IN_MEM);
-
-  if (entry->state == PG_ZERO)
-    kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
+  switch (entry->state)
+    {
+    case PG_IN_MEM:
+      /* Read-only write access caused the situation */
+      return false;
+    case PG_ZERO:
+      kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
+      break;
+    case PG_IN_SWAP:
+      kaddr = frame_get_page (uaddr, PAL_USER);
+      read_from_swap (entry->swap_sector, kaddr);
+      break;
+    default:
+      NOT_REACHED ();
+    }
   
   /* Set the mapping relation to the hardware page table. */
   if (!pagedir_set_page (thread_current ()->pagedir, uaddr, kaddr, true))
@@ -144,5 +155,40 @@ supt_load_page (struct supt_table *table, void *uaddr)
   entry->state = PG_IN_MEM;
   entry->kaddr = kaddr;
 
+  return true;
+}
+
+bool
+supt_set_swap (struct supt_table *table, void *uaddr)
+{
+  struct supt_entry tmp;
+  struct supt_entry *entry;
+  struct hash_elem *e;
+
+  ASSERT (is_user_vaddr (uaddr));
+  tmp.uaddr = pg_round_down (uaddr);
+
+  e = hash_find (&table->supt_hash, &tmp.elem);
+
+  /* No such page in the page table */
+  if (!e) 
+    return false;
+
+  entry = hash_entry (e, struct supt_entry, elem);
+
+  lock_acquire (&table->supt_lock);
+  entry->state = PG_IN_SWAP;
+  entry->swap_sector = write_to_swap (uaddr);
+  lock_release (&table->supt_lock);
+
+  /* Hard to recover */
+  ASSERT (entry->swap_sector != 0xFFFFFFFF);
+  if (entry->swap_sector == 0xFFFFFFFF)
+    {
+      entry->state = PG_IN_MEM;
+      return false;
+    }
+    // return false;
+  
   return true;
 }

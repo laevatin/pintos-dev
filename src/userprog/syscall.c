@@ -44,6 +44,7 @@ syscall_handler (struct intr_frame *f)
   check_frame (f);
   
   syscall_vec[*sp] (f);
+  thread_current ()->esp = NULL;
 }
 
 /* Exit the process with return status. */
