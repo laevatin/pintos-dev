@@ -168,7 +168,7 @@ page_fault (struct intr_frame *f)
                       ((uint32_t)f->esp <= fault_addr + 32);
 
   fault_page = pg_round_down ((void *)fault_addr);
-  if (is_valid_stack && !supt_look_up (t->supt, fault_page))
+  if (is_valid_stack && !supt_contains (t->supt, fault_page))
     supt_install_page (t->supt, fault_page, NULL, PG_ZERO); 
   
   if (is_user_vaddr (fault_page) && supt_load_page (t->supt, fault_page))

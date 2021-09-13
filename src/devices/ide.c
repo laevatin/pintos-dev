@@ -9,6 +9,7 @@
 #include "threads/io.h"
 #include "threads/interrupt.h"
 #include "threads/synch.h"
+#include "threads/thread.h"
 
 /* The code in this file is an interface to an ATA (IDE)
    controller.  It attempts to comply to [ATA-3]. */

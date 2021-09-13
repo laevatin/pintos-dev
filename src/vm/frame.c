@@ -24,6 +24,9 @@ struct frame_entry
     /* Owner thread */
     struct thread *t;
 
+    /* If locked, cannot be evicted */
+    bool locked;
+
     struct hash_elem elem;
   };
 
@@ -52,7 +55,7 @@ frame_init (void)
 {
   lock_init (&frame_lock);
   hash_init (&frame_table, entry_hash, entry_less, NULL);
-  random_init (123);
+  random_init (1);
 }
 
 /* Get a page for the user address uaddr using the frame allocator */
@@ -82,6 +85,7 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   entry->uaddr = uaddr;
   entry->kaddr = kaddr;
   entry->t = thread_current ();
+  entry->locked = false;
 
   lock_acquire (&frame_lock);
   hash_insert (&frame_table, &entry->elem);
@@ -131,22 +135,68 @@ frame_evict_get (enum palloc_flags flags)
   return palloc_get_page (flags);
 }
 
+/* Get the frame entry at kaddr */
+struct frame_entry *
+frame_get_entry (void *kaddr)
+{
+  struct frame_entry tmp;
+  struct hash_elem *e;
+
+  ASSERT (pg_ofs (kaddr) == 0);
+  tmp.kaddr = kaddr;
+
+  lock_acquire (&frame_lock);
+  e = hash_find (&frame_table, &tmp.elem);
+  lock_release (&frame_lock);
+  
+  if (e)
+    return hash_entry (e, struct frame_entry, elem);
+  return NULL; 
+}
+
+/* Set the frame at kaddr to locked */
+void
+frame_set_locked (void *kaddr)
+{
+  frame_get_entry (kaddr)->locked = true;
+}
+
+/* Set the frame at kaddr to unlocked */
+void
+frame_set_unlocked (void *kaddr)
+{
+  frame_get_entry (kaddr)->locked = false;
+}
+
 /* Select a frame to evict */
 static struct frame_entry *
 frame_select_eviction ()
 {
   size_t rnd = random_ulong () % hash_size (&frame_table);
+  int count = 5;
   
   struct hash_iterator i;
 
-  hash_first (&i, &frame_table);
-  while (hash_next (&i))
+  while (count--)
     {
-      struct frame_entry *f = hash_entry (hash_cur (&i), struct frame_entry, elem);
-      if (rnd-- == 0)
-        return f;
+      hash_first (&i, &frame_table);
+      while (hash_next (&i))
+        {
+          struct frame_entry *f = hash_entry (hash_cur (&i), 
+                                                struct frame_entry, elem);
+          // struct supt_entry *entry = supt_look_up (f->t->supt, f->uaddr);
+          // ASSERT (entry);
+          if (f->locked)
+            break;
+          // if (entry->locked)
+          //   continue;
+
+          if (rnd-- == 0)
+            return f;
+        }
     }
   
+  NOT_REACHED ();
   /* Not reached */
   return NULL;
 }

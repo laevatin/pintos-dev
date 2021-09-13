@@ -100,7 +100,7 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
 
 /* Find if the page contains address uaddr is in the supt */
 bool 
-supt_look_up (struct supt_table *table, void *uaddr)
+supt_contains (struct supt_table *table, void *uaddr)
 {
   struct supt_entry entry;
 
@@ -109,6 +109,25 @@ supt_look_up (struct supt_table *table, void *uaddr)
   
   return !!hash_find (&table->supt_hash, &entry.elem);
 }
+
+/* Get the supplemental page table entry of uaddr in table.
+  Returns NULL if not find. */
+struct supt_entry *
+supt_look_up (struct supt_table *table, void *uaddr)
+{
+  struct supt_entry tmp;
+  struct hash_elem *e;
+
+  ASSERT (is_user_vaddr (uaddr));
+  tmp.uaddr = pg_round_down (uaddr);
+
+  e = hash_find (&table->supt_hash, &tmp.elem);
+  if (e)
+    return hash_entry (e, struct supt_entry, elem);
+
+  return NULL;
+}
+
 
 bool 
 supt_load_page (struct supt_table *table, void *uaddr)
@@ -139,7 +158,14 @@ supt_load_page (struct supt_table *table, void *uaddr)
       break;
     case PG_IN_SWAP:
       kaddr = frame_get_page (uaddr, PAL_USER);
+
+      lock_acquire (&table->supt_lock);
+      frame_set_locked (kaddr);
+
       read_from_swap (entry->swap_sector, kaddr);
+
+      frame_set_unlocked (kaddr);
+      lock_release (&table->supt_lock);
       break;
     default:
       NOT_REACHED ();

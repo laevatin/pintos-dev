@@ -3,6 +3,7 @@
 #include "threads/vaddr.h"
 #include "threads/synch.h"
 #include "lib/kernel/bitmap.h"
+#include <stdio.h>
 
 #define SLOTSIZE PGSIZE
 #define SECTORS_PG (SLOTSIZE / BLOCK_SECTOR_SIZE)
@@ -48,7 +49,7 @@ write_to_swap (void *uaddr)
     return -1;
 
   start = available * SECTORS_PG;
-
+  // printf ("%p\n", uaddr);
   /* Write SECTORS_PG block sectors consecutively */
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_write (swap.swap_block, start + idx, 

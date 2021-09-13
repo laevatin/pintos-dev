@@ -38,7 +38,10 @@ struct supt_table *supt_create (void);
 void supt_destroy (struct supt_table *table);
 bool supt_install_page (struct supt_table *table, void *uaddr, void *kaddr, 
                           enum page_state state);
-bool supt_look_up (struct supt_table *table, void *uaddr);
+                          
+bool supt_contains (struct supt_table *table, void *uaddr);
+struct supt_entry *supt_look_up (struct supt_table *table, void *uaddr);
+
 bool supt_load_page (struct supt_table *table, void *uaddr);
 bool supt_set_swap (struct supt_table *table, void *uaddr);
 
