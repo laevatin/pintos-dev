@@ -45,4 +45,7 @@ struct supt_entry *supt_look_up (struct supt_table *table, void *uaddr);
 bool supt_load_page (struct supt_table *table, void *uaddr);
 bool supt_set_swap (struct supt_table *table, void *uaddr);
 
+bool supt_preload_mem (struct supt_table *table, void *uaddr, size_t size);
+void supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size);
+
 #endif

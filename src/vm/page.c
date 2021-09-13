@@ -151,26 +151,24 @@ supt_load_page (struct supt_table *table, void *uaddr)
   switch (entry->state)
     {
     case PG_IN_MEM:
-      /* Read-only write access caused the situation */
-      return false;
+      frame_set_locked (entry->kaddr);
+      return true;
     case PG_ZERO:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
       break;
     case PG_IN_SWAP:
       kaddr = frame_get_page (uaddr, PAL_USER);
-
       lock_acquire (&table->supt_lock);
-      frame_set_locked (kaddr);
-
       read_from_swap (entry->swap_sector, kaddr);
-
-      frame_set_unlocked (kaddr);
       lock_release (&table->supt_lock);
       break;
     default:
       NOT_REACHED ();
     }
   
+  /* What if the frame is evicted before this? */
+  frame_set_locked (kaddr);
+
   /* Set the mapping relation to the hardware page table. */
   if (!pagedir_set_page (thread_current ()->pagedir, uaddr, kaddr, true))
     {
@@ -204,7 +202,8 @@ supt_set_swap (struct supt_table *table, void *uaddr)
 
   lock_acquire (&table->supt_lock);
   entry->state = PG_IN_SWAP;
-  entry->swap_sector = write_to_swap (uaddr);
+  /* Here must write the kernel address since the thread pagedir may change */
+  entry->swap_sector = write_to_swap (entry->kaddr);
   lock_release (&table->supt_lock);
 
   /* Hard to recover */
@@ -217,4 +216,38 @@ supt_set_swap (struct supt_table *table, void *uaddr)
     // return false;
   
   return true;
+}
+
+/* Avoid page fault on writing or reading to file system 
+  by load the memory required in advance. */
+bool 
+supt_preload_mem (struct supt_table *table, void *uaddr, size_t size)
+{
+  uintptr_t base = (uintptr_t) pg_round_down (uaddr);
+
+  while (base < (uintptr_t)(uaddr + size))
+    {
+      if (!supt_load_page (table, (void *)base))
+        return false;
+      base += PGSIZE;
+    }
+
+  return true;
+}
+
+/* Unlock the memory required by supt_preload_mem */
+void 
+supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
+{
+  uintptr_t base = (uintptr_t) pg_round_down (uaddr);
+  void *kaddr;
+  
+  while (base < (uintptr_t)(uaddr + size))
+    {
+      kaddr = supt_look_up (table, (void *)base)->kaddr;
+      ASSERT (kaddr);
+      frame_set_unlocked (kaddr);
+      base += PGSIZE;
+    }
+
 }

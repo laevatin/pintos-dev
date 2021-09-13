@@ -171,9 +171,13 @@ page_fault (struct intr_frame *f)
   if (is_valid_stack && !supt_contains (t->supt, fault_page))
     supt_install_page (t->supt, fault_page, NULL, PG_ZERO); 
   
-  if (is_user_vaddr (fault_page) && supt_load_page (t->supt, fault_page))
-    return;
-
+  if (not_present && is_user_vaddr (fault_page) 
+        && supt_load_page (t->supt, fault_page))
+    {
+      supt_unlock_mem (t->supt, fault_page, 0);
+      return;
+    }
+    
   if (not_present || (is_kernel_vaddr (fault_page) && user) || write)
     exit (-1);
 

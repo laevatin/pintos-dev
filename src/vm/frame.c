@@ -68,7 +68,7 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   /* Must allocate from user pool */
   ASSERT (flags & PAL_USER);
   ASSERT (pg_ofs (uaddr) == 0);
-
+  
   kaddr = palloc_get_page (flags);
   if (!kaddr) 
     kaddr = frame_evict_get (flags);
@@ -121,14 +121,15 @@ void *
 frame_evict_get (enum palloc_flags flags)
 {
   struct frame_entry *f = frame_select_eviction ();
+
   uint32_t *pagedir = f->t->pagedir;
   void *oldaddr = f->uaddr;
-
   // printf ("evicted: %p\n", f->uaddr);
   ASSERT (f);
 
   if (!supt_set_swap (f->t->supt, oldaddr))
     return NULL;      /* Failed to set swap */
+
   frame_free_page (f->kaddr);
   pagedir_clear_page (pagedir, oldaddr);
 
@@ -173,7 +174,7 @@ static struct frame_entry *
 frame_select_eviction ()
 {
   size_t rnd = random_ulong () % hash_size (&frame_table);
-  int count = 5;
+  int count = 10;
   
   struct hash_iterator i;
 
@@ -187,7 +188,7 @@ frame_select_eviction ()
           // struct supt_entry *entry = supt_look_up (f->t->supt, f->uaddr);
           // ASSERT (entry);
           if (f->locked)
-            break;
+            continue;
           // if (entry->locked)
           //   continue;
 

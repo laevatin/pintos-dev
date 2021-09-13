@@ -4,6 +4,7 @@
 #include "threads/synch.h"
 #include "lib/kernel/bitmap.h"
 #include <stdio.h>
+#include "threads/thread.h"
 
 #define SLOTSIZE PGSIZE
 #define SECTORS_PG (SLOTSIZE / BLOCK_SECTOR_SIZE)
@@ -33,14 +34,14 @@ swap_init ()
 
 /* Write the page in uaddr to swap partition */
 block_sector_t
-write_to_swap (void *uaddr)
+write_to_swap (void *addr)
 {
   block_sector_t start;
   size_t available;
   size_t idx;
 
-  ASSERT (is_user_vaddr (uaddr));
-  ASSERT (pg_ofs (uaddr) == 0);
+  // ASSERT (is_user_vaddr (addr));
+  ASSERT (pg_ofs (addr) == 0);
 
   available = bitmap_scan (swap.swap_used_map, 0, 1, false);
 
@@ -49,11 +50,11 @@ write_to_swap (void *uaddr)
     return -1;
 
   start = available * SECTORS_PG;
-  // printf ("%p\n", uaddr);
+
   /* Write SECTORS_PG block sectors consecutively */
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_write (swap.swap_block, start + idx, 
-                  (void *)((char *)uaddr + (BLOCK_SECTOR_SIZE * idx)));
+                  (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
   
   bitmap_set (swap.swap_used_map, available, true);
 
