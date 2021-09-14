@@ -2,12 +2,14 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <string.h>
+#include "vm/page.h"
 
 static void syscall_handler (struct intr_frame *f);
 
 static syscall syscall_vec[SYSCALLNUM];
 
 static void check_frame (struct intr_frame *f);
+static void mmap_end (void);
 
 /* The lock used when accessing file system */
 struct lock file_lock;
@@ -31,6 +33,9 @@ syscall_init (void)
   syscall_vec[SYS_SEEK] = syscall_seek;
   syscall_vec[SYS_TELL] = syscall_tell;
   syscall_vec[SYS_CLOSE] = syscall_close;
+  
+  syscall_vec[SYS_MMAP] = syscall_mmap;
+  syscall_vec[SYS_MUNMAP] = syscall_munmap;
 }
 
 /* Entry of system call. */
@@ -218,9 +223,13 @@ syscall_read (struct intr_frame *f)
       struct file *fl = thread_get_file (thread_current (), fd);
       if (!fl)
         return;
+      if (!supt_preload_mem (thread_current ()->supt, buffer, len))
+        exit(-1);
       lock_acquire (&file_lock);
       f->eax = file_read (fl, buffer, len);
       lock_release (&file_lock);
+      supt_unlock_mem (thread_current ()->supt, buffer, len);
+
     }
 } 
 
@@ -245,10 +254,12 @@ syscall_write (struct intr_frame *f)
       struct file *fl = thread_get_file (thread_current (), fd);
       if (!fl)
         return;
-
+      if (!supt_preload_mem (thread_current ()->supt, buffer, len))
+        exit(-1);
       lock_acquire (&file_lock);
       f->eax = file_write (fl, buffer, len);
       lock_release (&file_lock);
+      supt_unlock_mem (thread_current ()->supt, buffer, len);
     }
 } 
 
@@ -310,6 +321,92 @@ syscall_close (struct intr_frame *f)
   thread_remove_file (cur, fd);
 } 
 
+/* System call for mapping the file open as fd into addr */
+void
+syscall_mmap (struct intr_frame *f)
+{
+  int *sp = f->esp;
+  int fd = *(sp + 1);
+  
+  void *addr = (void *)*(sp + 2);
+
+  struct thread *cur = thread_current ();
+  struct file *fl;
+  int file_len;
+
+  uintptr_t base = (uintptr_t)addr;
+  uintptr_t top;
+
+  f->eax = -1;
+  if (fd <= 1 || pg_ofs (addr) != 0)
+    return;
+
+  fl = thread_get_file (cur, fd);
+  lock_acquire (&file_lock);
+  /* Reopen the file */
+  fl = file_reopen (fl);
+  if (!fl) 
+    return mmap_end ();
+
+  file_len = file_length (fl);
+  if (file_len == 0 || supt_check_exist (cur->supt, addr, file_len))
+    return mmap_end ();
+  
+  /* Install it to the page table */
+  top = (uintptr_t)(addr + file_len);
+  while (base <= top)
+    {
+      off_t size = top - base;
+      supt_install_filemap (cur->supt, (void *)base, fl, 
+                  base - (uintptr_t)addr, (size >= PGSIZE) ? PGSIZE : size);
+      base += PGSIZE;
+    }
+  
+  /* Get the mmapid and add it to current thread */
+  f->eax = thread_add_mmap (cur, fl, addr, file_len);
+
+  return mmap_end ();
+}
+
+static void mmap_end ()
+{
+  lock_release (&file_lock);
+  return;
+}
+
+/* Unmaps the mapping designated by mmap */
+void
+syscall_munmap (struct intr_frame *f)
+{
+  int *sp = f->esp;
+  int mapid = *(sp + 1);
+
+  off_t file_len;
+  struct thread *cur = thread_current ();
+  struct file *fl;
+  void *addr = thread_munmap (cur, mapid, &file_len, &fl);
+ 
+  uintptr_t top;
+  uintptr_t base = (uintptr_t)addr;
+
+  f->eax = -1;
+  if (!addr)
+    return;
+  
+  lock_acquire (&file_lock);
+  file_close (fl);
+  lock_release (&file_lock);
+
+  /* Delete it from the page table */
+  top = (uintptr_t)(addr + file_len);
+  while (base <= top)
+    {
+      supt_delete_entry (cur->supt, (void *)base);
+      base += PGSIZE;
+    }
+
+}
+
 /* Close all the files opened by current thread. */
 void
 close_all_file (struct thread *t)
@@ -329,5 +426,4 @@ close_all_file (struct thread *t)
 
       free (ffd);
     }
-
 }

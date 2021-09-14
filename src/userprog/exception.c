@@ -8,8 +8,6 @@
 #include "userprog/pagedir.h"
 #include "vm/page.h"
 
-#define STACK_SIZE 0x800000
-
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 

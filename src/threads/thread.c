@@ -591,6 +591,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->return_status = -1;
   t->elf = NULL;
   list_init (&t->openfds);
+  list_init (&t->mmap_list);
   list_init (&t->child_threads);
   sema_init (&t->wait_child_sema, 0);
   sema_init (&t->wait_load, 0);
@@ -858,4 +859,58 @@ thread_remove_file (struct thread *t, int fd)
   list_remove (&ffd->elem);
   free (ffd);
 }
+
 #endif
+
+/* Get the next memory map id in thread t. */
+int 
+thread_nextmapid (struct thread *t)
+{
+  return t->nextmapid++;
+}
+
+/* Add a memory map relation to the thread's file maps */
+int 
+thread_add_mmap (struct thread *t, struct file *fl, void *uaddr, size_t size)
+{
+  struct mmapfile *mf = malloc (sizeof (struct mmapfile));
+  mf->mmapid = thread_nextmapid (t);
+  mf->uaddr = uaddr;
+  mf->size = size;
+  mf->f = fl;
+
+  list_push_back (&t->mmap_list, &mf->elem);
+  return mf->mmapid;
+}
+
+/* Remove the memory map relation with mapid. */
+void *
+thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f)
+{
+  struct list_elem *e;
+  struct mmapfile *mf = NULL;
+  void *uaddr;
+
+  for (e = list_begin (&t->mmap_list); e != list_end (&t->mmap_list);
+    e = list_next (e))
+    {
+      struct mmapfile *tmp = list_entry (e, struct mmapfile, elem);
+      if (tmp->mmapid == mmapid)
+        {
+          mf = tmp;
+          break;
+        }
+    }
+  
+  if (mf == NULL)
+    return NULL;
+  
+  list_remove (&mf->elem);
+
+  *size = mf->size;
+  *f = mf->f;
+  uaddr = mf->uaddr;
+  free (mf);
+
+  return uaddr;
+}

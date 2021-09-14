@@ -7,8 +7,11 @@
 #include "threads/pte.h"
 #include "frame.h"
 #include "userprog/pagedir.h"
+#include "userprog/exception.h"
+#include "filesys/file.h"
 #include <stdio.h>
 
+static void load_file_to_page (struct supt_table *table, void *uaddr);
 /* hash functions */
 static unsigned 
 entry_hash (const struct hash_elem *e, void *aux UNUSED)
@@ -29,6 +32,8 @@ static void
 entry_destory (struct hash_elem *e, void *aux UNUSED)
 {
   struct supt_entry *entry = hash_entry (e, struct supt_entry, elem);
+  if (entry->filefrom)
+    free (entry->filefrom);
   free (entry);
 }
 
@@ -76,6 +81,7 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   entry->swap_sector = -1;
   entry->state = state;
   entry->dirty = false;
+  entry->filefrom = NULL;
 
   if (state == PG_IN_MEM)
     entry->kaddr = kaddr;
@@ -95,7 +101,44 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   hash_insert (&table->supt_hash, &entry->elem);
   lock_release (&table->supt_lock);
 
+  // printf ("installed: %p.\n", uaddr);  
+
   return true;
+}
+
+/* Install a page in supt by file map. offset is the file offset
+  on the first byte in the page. size is the file length in the 
+  page, if it is not equal to PG_SIZE, it is filled with zeroes. */
+bool 
+supt_install_filemap (struct supt_table *table, void *uaddr, struct file *fl, 
+                        off_t offset, off_t size)
+{
+  struct supt_entry *entry;
+
+  if (!supt_install_page (table, uaddr, NULL, PG_ZERO))
+    return false;
+  
+  entry = supt_look_up (table, uaddr);
+  entry->filefrom = malloc (sizeof (struct supt_file));
+  entry->state = PG_FILE_MAPPED;
+  entry->filefrom->fl = fl;
+  entry->filefrom->offset = offset;
+  entry->filefrom->size_in_page = size;
+  
+  return true;
+}
+
+/* Delete the page table entries start from uaddr with pages of `size` */
+void 
+supt_delete_entry (struct supt_table *table, void *uaddr)
+{
+  struct supt_entry tmp;
+  struct hash_elem *e;
+
+  tmp.uaddr = uaddr;
+
+  e = hash_delete (&table->supt_hash, &tmp.elem);
+  entry_destory (e, NULL);
 }
 
 /* Find if the page contains address uaddr is in the supt */
@@ -162,6 +205,14 @@ supt_load_page (struct supt_table *table, void *uaddr)
       read_from_swap (entry->swap_sector, kaddr);
       lock_release (&table->supt_lock);
       break;
+    case PG_FILE_MAPPED:
+      kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
+      lock_acquire (&table->supt_lock);
+      /* The kaddr is used in load_file_to_page */
+      entry->kaddr = kaddr;
+      load_file_to_page (table, uaddr);
+      lock_release (&table->supt_lock);
+      break;
     default:
       NOT_REACHED ();
     }
@@ -225,7 +276,12 @@ supt_preload_mem (struct supt_table *table, void *uaddr, size_t size)
 {
   uintptr_t base = (uintptr_t) pg_round_down (uaddr);
 
-  while (base < (uintptr_t)(uaddr + size))
+  /* Stack growth, need to install new zero page */
+  if ((((unsigned)PHYS_BASE) - base <= STACK_SIZE)
+                    && (base < ((unsigned)PHYS_BASE)))
+    return true;
+
+  while (base <= (uintptr_t)(uaddr + size))
     {
       if (!supt_load_page (table, (void *)base))
         return false;
@@ -235,19 +291,53 @@ supt_preload_mem (struct supt_table *table, void *uaddr, size_t size)
   return true;
 }
 
-/* Unlock the memory required by supt_preload_mem */
+/* Unlock the memory required by supt_preload_mem. */
 void 
 supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
 {
   uintptr_t base = (uintptr_t) pg_round_down (uaddr);
   void *kaddr;
   
-  while (base < (uintptr_t)(uaddr + size))
+  while (base <= (uintptr_t)(uaddr + size))
     {
       kaddr = supt_look_up (table, (void *)base)->kaddr;
       ASSERT (kaddr);
       frame_set_unlocked (kaddr);
       base += PGSIZE;
     }
+}
 
+/* Check if ANY page starts from uaddr with size is exist. */
+bool 
+supt_check_exist (struct supt_table *table, void *uaddr, size_t size)
+{
+  uintptr_t base = (uintptr_t) pg_round_down (uaddr);
+  struct supt_entry *entry;
+
+  while (base <= (uintptr_t)(uaddr + size))
+    {
+      entry = supt_look_up (table, (void *)base);
+      if (entry) 
+        return true;
+
+      base += PGSIZE;
+    }
+
+  return false;
+}
+
+/* Load the file associated to the page entry with uaddr to the page */
+static void 
+load_file_to_page (struct supt_table *table, void *uaddr)
+{
+  struct supt_entry* entry;
+  struct supt_file* sf;
+
+  ASSERT (pg_ofs (uaddr) == 0);
+  
+  entry = supt_look_up (table, uaddr);
+  ASSERT (entry);
+  sf = entry->filefrom;
+
+  file_read_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
 }

@@ -36,6 +36,15 @@ struct filefd
     struct list_elem elem;
   };
 
+struct mmapfile
+  {
+    struct file *f;
+    void *uaddr;
+    int mmapid;
+    size_t size;
+    struct list_elem elem;
+  };
+
 /* A kernel thread or user process.
 
    Each thread structure is stored in its own 4 kB page.  The
@@ -143,6 +152,9 @@ struct thread
 #ifdef VM
     /* Since there is only one thread per user process */
     struct supt_table *supt;            /* Only effective on user programs. */
+    
+    struct list mmap_list;              /* Mmap files owned by the thread */
+    int nextmapid;
 #endif
     void *esp;                          /* Saved esp when in kernel mode */
 
@@ -211,6 +223,10 @@ struct file *thread_get_file (struct thread *t, int fd);
 int thread_add_file (struct thread *t, struct file *f);
 void thread_remove_file (struct thread *t, int fd);
 int thread_nextfd (struct thread *t);
+int thread_nextmapid (struct thread *t);
+
+int thread_add_mmap (struct thread *t, struct file *fl, void *uaddr, size_t size);
+void *thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */
