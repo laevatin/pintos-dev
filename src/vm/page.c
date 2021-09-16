@@ -128,17 +128,27 @@ supt_install_filemap (struct supt_table *table, void *uaddr, struct file *fl,
   return true;
 }
 
-/* Delete the page table entries start from uaddr with pages of `size` */
 void 
-supt_delete_entry (struct supt_table *table, void *uaddr)
+supt_remove_filemap (struct supt_table *table, void *uaddr, off_t size)
 {
-  struct supt_entry tmp;
-  struct hash_elem *e;
+  uintptr_t base = (uintptr_t) uaddr;
+  /* Delete it from the page table */
+  uintptr_t top = (uintptr_t)(uaddr + size);
+  while (base <= top)
+    {
+      struct supt_entry tmp;
+      struct hash_elem *e;
+      /* write the memory map region to file system */
+      supt_set_swap (thread_current (), (void *)base);
 
-  tmp.uaddr = uaddr;
+      tmp.uaddr = (void *)base;
+      /* delete the entry from the supt */
+      e = hash_delete (&table->supt_hash, &tmp.elem);
 
-  e = hash_delete (&table->supt_hash, &tmp.elem);
-  entry_destory (e, NULL);
+      /* deallocate resources */
+      entry_destory (e, NULL);
+      base += PGSIZE;
+    }
 }
 
 /* Find if the page contains address uaddr is in the supt */
@@ -233,8 +243,11 @@ supt_load_page (struct supt_table *table, void *uaddr)
   return true;
 }
 
+/* Set the page at uaddr in the supt table of thread t to SWAP. 
+  The page is freed in the frame allocator. The entry of hardware 
+  page table of the thread is cleared. */
 bool
-supt_set_swap (struct supt_table *table, void *uaddr)
+supt_set_swap (struct thread *t, void *uaddr)
 {
   struct supt_entry tmp;
   struct supt_entry *entry;
@@ -243,7 +256,7 @@ supt_set_swap (struct supt_table *table, void *uaddr)
   ASSERT (is_user_vaddr (uaddr));
   tmp.uaddr = pg_round_down (uaddr);
 
-  e = hash_find (&table->supt_hash, &tmp.elem);
+  e = hash_find (&t->supt->supt_hash, &tmp.elem);
 
   /* No such page in the page table */
   if (!e) 
@@ -251,11 +264,25 @@ supt_set_swap (struct supt_table *table, void *uaddr)
 
   entry = hash_entry (e, struct supt_entry, elem);
 
-  lock_acquire (&table->supt_lock);
-  entry->state = PG_IN_SWAP;
-  /* Here must write the kernel address since the thread pagedir may change */
-  entry->swap_sector = write_to_swap (entry->kaddr);
-  lock_release (&table->supt_lock);
+  if (entry->state == PG_IN_SWAP || entry->state == PG_FILE_MAPPED)
+    return true;
+
+  lock_acquire (&t->supt->supt_lock);
+  if (!entry->filefrom)
+    {
+      entry->state = PG_IN_SWAP;
+      /* Here must write the kernel address since the thread pagedir may change */
+      entry->swap_sector = write_to_swap (entry->kaddr);
+    }
+  else 
+    {
+      struct supt_file *sf = entry->filefrom;
+      /* Not used and not the error number */
+      entry->swap_sector = 0xFFFFFFFE;
+      entry->state = PG_FILE_MAPPED;
+      file_write_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
+    }
+  lock_release (&t->supt->supt_lock);
 
   /* Hard to recover */
   ASSERT (entry->swap_sector != 0xFFFFFFFF);
@@ -264,8 +291,10 @@ supt_set_swap (struct supt_table *table, void *uaddr)
       entry->state = PG_IN_MEM;
       return false;
     }
-    // return false;
   
+  frame_free_page (entry->kaddr);
+  pagedir_clear_page (t->pagedir, uaddr);
+
   return true;
 }
 

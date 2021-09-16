@@ -227,6 +227,7 @@ int thread_nextmapid (struct thread *t);
 
 int thread_add_mmap (struct thread *t, struct file *fl, void *uaddr, size_t size);
 void *thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f);
+void thread_munmap_all (struct thread *t);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */

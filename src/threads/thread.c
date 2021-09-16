@@ -914,3 +914,22 @@ thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f)
 
   return uaddr;
 }
+
+/* Remove all the memory map relation in the thread and write it to 
+  the file systems. */
+void 
+thread_munmap_all (struct thread *t)
+{
+  struct list_elem *e;
+  struct mmapfile *mf;
+
+  while (!list_empty (&t->mmap_list))
+    {
+      e = list_pop_front (&t->mmap_list);
+      mf = list_entry (e, struct mmapfile, elem);
+      supt_remove_filemap (t->supt, mf->uaddr, mf->size);
+      /* Synchronization? */
+      file_close (mf->f);
+      free (mf);
+    }
+}

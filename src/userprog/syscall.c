@@ -338,7 +338,7 @@ syscall_mmap (struct intr_frame *f)
   uintptr_t top;
 
   f->eax = -1;
-  if (fd <= 1 || pg_ofs (addr) != 0)
+  if (!addr || fd <= 1 || pg_ofs (addr) != 0)
     return;
 
   fl = thread_get_file (cur, fd);
@@ -385,26 +385,16 @@ syscall_munmap (struct intr_frame *f)
   struct thread *cur = thread_current ();
   struct file *fl;
   void *addr = thread_munmap (cur, mapid, &file_len, &fl);
- 
-  uintptr_t top;
-  uintptr_t base = (uintptr_t)addr;
 
   f->eax = -1;
   if (!addr)
     return;
-  
+
+  supt_remove_filemap (cur->supt, addr, file_len);
+
   lock_acquire (&file_lock);
   file_close (fl);
   lock_release (&file_lock);
-
-  /* Delete it from the page table */
-  top = (uintptr_t)(addr + file_len);
-  while (base <= top)
-    {
-      supt_delete_entry (cur->supt, (void *)base);
-      base += PGSIZE;
-    }
-
 }
 
 /* Close all the files opened by current thread. */

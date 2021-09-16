@@ -121,17 +121,11 @@ void *
 frame_evict_get (enum palloc_flags flags)
 {
   struct frame_entry *f = frame_select_eviction ();
-
-  uint32_t *pagedir = f->t->pagedir;
-  void *oldaddr = f->uaddr;
   // printf ("evicted: %p\n", f->uaddr);
   ASSERT (f);
 
-  if (!supt_set_swap (f->t->supt, oldaddr))
+  if (!supt_set_swap (f->t, f->uaddr))
     return NULL;      /* Failed to set swap */
-
-  frame_free_page (f->kaddr);
-  pagedir_clear_page (pagedir, oldaddr);
 
   return palloc_get_page (flags);
 }

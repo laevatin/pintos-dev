@@ -215,6 +215,9 @@ process_exit (void)
 
   /* RELEASE ALL THE LOCKS */
 
+  /* Unmap all the memory map areas */
+  thread_munmap_all (cur);
+
   if (cur->elf)
     {
       if (!lock_held_by_current_thread (&file_lock))
