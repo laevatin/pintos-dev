@@ -24,6 +24,7 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+static int ready_num;
 
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
@@ -98,6 +99,7 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
 
+  ready_num = 0;
   sys_load_avg = 0;
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -255,6 +257,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+  ready_num += 1;
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -325,7 +328,10 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    {
+      list_push_back (&ready_list, &cur->elem);
+      ready_num += 1;
+    }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -354,7 +360,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-  if (!list_empty (&ready_list) && 
+  if (ready_num != 0 && 
     thread_get_priority_thread (highest_priority_thread (&ready_list, false))
       > thread_get_priority ())
     thread_yield ();
@@ -445,11 +451,12 @@ void
 update_sys_load_avg (void) 
 {
   /* Ready threads includes the one is currently running except idle */
-  int ready_threads = list_size (&ready_list);
+  int ready_threads = ready_num;
   if (thread_current () != idle_thread)
     ready_threads += 1;
   sys_load_avg = FMULF (FDIVF (FLOAT (59), FLOAT (60)), sys_load_avg) +
                 FDIVI (FLOAT (ready_threads), 60);
+  // printf ("\nupdate: %d\n", INT (sys_load_avg * 100));
 }
 
 /* Updates all thread's recent_cpu */
@@ -599,10 +606,13 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
+  if (ready_num == 0)
     return idle_thread;
   else
-    return highest_priority_thread (&ready_list, true);
+    {
+      ready_num -= 1;
+      return highest_priority_thread (&ready_list, true);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page

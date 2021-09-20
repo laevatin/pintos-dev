@@ -205,9 +205,10 @@ timer_interrupt (struct intr_frame *args UNUSED)
   if (thread_mlfqs) 
     {
       struct thread *t = thread_current ();
-      t->recent_cpu = FADDI (t->recent_cpu, 1);
+      if (t->status == THREAD_RUNNING)
+        t->recent_cpu = FADDI (t->recent_cpu, 1);
       
-      if ((timer_ticks () % TIMER_FREQ) == 0)
+      if ((ticks % TIMER_FREQ) == 0)
         {
           update_sys_load_avg ();
           update_thread_recent_cpu ();
