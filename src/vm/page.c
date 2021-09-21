@@ -11,6 +11,8 @@
 #include "filesys/file.h"
 #include <stdio.h>
 
+extern struct lock frame_lock;
+
 static void load_file_to_page (struct supt_table *table, void *uaddr);
 /* hash functions */
 static unsigned 
@@ -53,7 +55,30 @@ supt_create ()
 void 
 supt_destroy (struct supt_table *table)
 {
+  struct hash_iterator i;
+
   ASSERT (table);
+
+  /* Free all the swap slot occupied by the supt */
+  lock_acquire (&frame_lock);
+  lock_acquire (&table->supt_lock);
+
+  hash_first (&i, &table->supt_hash);
+  while (hash_next (&i))
+    {
+      struct supt_entry *entry = hash_entry (hash_cur (&i), 
+                                            struct supt_entry, elem);
+      if (entry->state == PG_IN_SWAP)
+        {
+          free_swap_slot (entry->swap_sector);
+          // printf ("free slot from destroy: %d\n", entry->swap_sector / 8);
+        }
+      else if (entry->state == PG_IN_MEM)
+        frame_delete_page (entry->kaddr);
+    }
+
+  lock_release (&table->supt_lock);
+  lock_release (&frame_lock);
 
   hash_destroy (&table->supt_hash, entry_destory);
   free (table);
@@ -75,8 +100,9 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   ASSERT (entry);
 
   ASSERT (uaddr == pg_round_down (uaddr));
-  // printf ("load: %p \n", uaddr);
-    
+  printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
+  lock_acquire (&table->supt_lock);
+
   entry->uaddr = uaddr;
   entry->swap_sector = -1;
   entry->state = state;
@@ -97,7 +123,6 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
       return false;
     }
 
-  lock_acquire (&table->supt_lock);
   hash_insert (&table->supt_hash, &entry->elem);
   lock_release (&table->supt_lock);
 
@@ -118,13 +143,16 @@ supt_install_filemap (struct supt_table *table, void *uaddr, struct file *fl,
   if (!supt_install_page (table, uaddr, NULL, PG_ZERO))
     return false;
   
+  lock_acquire (&table->supt_lock);
+
   entry = supt_look_up (table, uaddr);
   entry->filefrom = malloc (sizeof (struct supt_file));
   entry->state = PG_FILE_MAPPED;
   entry->filefrom->fl = fl;
   entry->filefrom->offset = offset;
   entry->filefrom->size_in_page = size;
-  
+
+  lock_release (&table->supt_lock);
   return true;
 }
 
@@ -134,6 +162,8 @@ supt_remove_filemap (struct supt_table *table, void *uaddr, off_t size)
   uintptr_t base = (uintptr_t) uaddr;
   /* Delete it from the page table */
   uintptr_t top = (uintptr_t)(uaddr + size);
+  lock_acquire (&frame_lock);
+  lock_acquire (&table->supt_lock);
   while (base <= top)
     {
       struct supt_entry tmp;
@@ -149,6 +179,9 @@ supt_remove_filemap (struct supt_table *table, void *uaddr, off_t size)
       entry_destory (e, NULL);
       base += PGSIZE;
     }
+
+  lock_release (&table->supt_lock);
+  lock_release (&frame_lock);
 }
 
 /* Find if the page contains address uaddr is in the supt */
@@ -192,53 +225,60 @@ supt_load_page (struct supt_table *table, void *uaddr)
 
   ASSERT (is_user_vaddr (uaddr));
   tmp.uaddr = pg_round_down (uaddr);
-
+  
   e = hash_find (&table->supt_hash, &tmp.elem);
 
   /* No such page in the page table */
   if (!e) 
     return false;
 
+  /* frame table should be locked */
+  lock_acquire (&frame_lock);
+  lock_acquire (&table->supt_lock);
+  
   entry = hash_entry (e, struct supt_entry, elem);
-
+  printf ("%d load %p \n", thread_current ()->tid, uaddr);
   switch (entry->state)
     {
     case PG_IN_MEM:
       frame_set_locked (entry->kaddr);
+      lock_release (&frame_lock);
+      lock_release (&table->supt_lock);
       return true;
     case PG_ZERO:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
       break;
     case PG_IN_SWAP:
       kaddr = frame_get_page (uaddr, PAL_USER);
-      lock_acquire (&table->supt_lock);
       read_from_swap (entry->swap_sector, kaddr);
-      lock_release (&table->supt_lock);
       break;
     case PG_FILE_MAPPED:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
-      lock_acquire (&table->supt_lock);
       /* The kaddr is used in load_file_to_page */
       entry->kaddr = kaddr;
       load_file_to_page (table, uaddr);
-      lock_release (&table->supt_lock);
       break;
     default:
       NOT_REACHED ();
     }
   
   /* What if the frame is evicted before this? */
+  /* Update: there is a bug. Must keep synchronized */
   frame_set_locked (kaddr);
 
   /* Set the mapping relation to the hardware page table. */
   if (!pagedir_set_page (thread_current ()->pagedir, uaddr, kaddr, true))
     {
       frame_free_page (kaddr);
+      lock_release (&frame_lock);
+      lock_release (&table->supt_lock);
       return false;
     }
 
   entry->state = PG_IN_MEM;
   entry->kaddr = kaddr;
+  lock_release (&frame_lock);
+  lock_release (&table->supt_lock);
 
   return true;
 }
@@ -246,12 +286,15 @@ supt_load_page (struct supt_table *table, void *uaddr)
 /* Set the page at uaddr in the supt table of thread t to SWAP. 
   The page is freed in the frame allocator. The entry of hardware 
   page table of the thread is cleared. */
+/* For synchronization purpose (avoid deadlock), you should hold
+  frame_lock before calling this. */
 bool
 supt_set_swap (struct thread *t, void *uaddr)
 {
   struct supt_entry tmp;
   struct supt_entry *entry;
   struct hash_elem *e;
+  bool locked_outside = true;
 
   ASSERT (is_user_vaddr (uaddr));
   tmp.uaddr = pg_round_down (uaddr);
@@ -267,7 +310,17 @@ supt_set_swap (struct thread *t, void *uaddr)
   if (entry->state == PG_IN_SWAP || entry->state == PG_FILE_MAPPED)
     return true;
 
-  lock_acquire (&t->supt->supt_lock);
+  /* frame_lock and supt_lock may cause dead lock.
+  when a thread is holding the frame_lock to require another thread 
+  to evict one page, but the other thread is holding the supt_lock 
+  and waiting for frame_lock */
+
+  if (!lock_held_by_current_thread (&t->supt->supt_lock))
+    {
+      lock_acquire (&t->supt->supt_lock);
+      locked_outside = false;
+    }
+
   if (!entry->filefrom)
     {
       entry->state = PG_IN_SWAP;
@@ -282,18 +335,22 @@ supt_set_swap (struct thread *t, void *uaddr)
       entry->state = PG_FILE_MAPPED;
       file_write_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
     }
-  lock_release (&t->supt->supt_lock);
 
   /* Hard to recover */
   ASSERT (entry->swap_sector != 0xFFFFFFFF);
-  if (entry->swap_sector == 0xFFFFFFFF)
-    {
-      entry->state = PG_IN_MEM;
-      return false;
-    }
+  // if (entry->swap_sector == 0xFFFFFFFF)
+  //   {
+  //     entry->state = PG_IN_MEM;
+  //     return false;
+  //   }
   
   frame_free_page (entry->kaddr);
   pagedir_clear_page (t->pagedir, uaddr);
+
+  if (!locked_outside)
+    lock_release (&t->supt->supt_lock);
+  
+  printf ("%d set to swap %p \n", t->tid, uaddr);
 
   return true;
 }
@@ -326,6 +383,8 @@ supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
 {
   uintptr_t base = (uintptr_t) pg_round_down (uaddr);
   void *kaddr;
+
+  lock_acquire (&frame_lock);
   
   while (base <= (uintptr_t)(uaddr + size))
     {
@@ -334,6 +393,8 @@ supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
       frame_set_unlocked (kaddr);
       base += PGSIZE;
     }
+  
+  lock_release (&frame_lock);
 }
 
 /* Check if ANY page starts from uaddr with size is exist. */

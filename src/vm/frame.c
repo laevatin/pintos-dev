@@ -9,8 +9,9 @@
 #include "lib/random.h"
 #include <stdio.h>
 
-/* Lock to keep data structures synchonized. */
-static struct lock frame_lock;
+/* Lock to keep data structures synchonized. 
+  Users: frame.c page.c */
+struct lock frame_lock;
 
 /* An hash table with key=kaddr, v=frame_entry. */
 static struct hash frame_table;
@@ -55,7 +56,7 @@ frame_init (void)
 {
   lock_init (&frame_lock);
   hash_init (&frame_table, entry_hash, entry_less, NULL);
-  random_init (1);
+  random_init (153);
 }
 
 /* Get a page for the user address uaddr using the frame allocator */
@@ -64,11 +65,19 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
 {
   void *kaddr; 
   struct frame_entry *entry;
+  bool locked_outside = true; // ugly
 
   /* Must allocate from user pool */
   ASSERT (flags & PAL_USER);
   ASSERT (pg_ofs (uaddr) == 0);
   
+  if (!lock_held_by_current_thread (&frame_lock))
+    {
+      lock_acquire (&frame_lock);
+      // printf ("lock_acquire");
+      locked_outside = false;
+    }
+
   kaddr = palloc_get_page (flags);
   if (!kaddr) 
     kaddr = frame_evict_get (flags);
@@ -87,10 +96,15 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   entry->t = thread_current ();
   entry->locked = false;
 
-  lock_acquire (&frame_lock);
   hash_insert (&frame_table, &entry->elem);
-  lock_release (&frame_lock);
 
+  if (!locked_outside)
+    {
+      lock_release (&frame_lock);
+      // printf("lock release\n");
+    }
+
+  // printf ("%s get %p\n", thread_current ()->name, kaddr);
   return kaddr;
 }
 
@@ -100,20 +114,54 @@ frame_free_page (void *kaddr)
 {
   struct frame_entry f;
   struct hash_elem *e;
+  bool locked_outside = true;
+
+  ASSERT (pg_ofs (kaddr) == 0);
+
+  f.kaddr = kaddr;
+
+  /* When evicting, the lock is already held by current thread */
+  if (!lock_held_by_current_thread (&frame_lock))
+    {
+      locked_outside = false;
+      lock_acquire (&frame_lock);
+      // printf ("lock_acquire");
+    }
+  /* Remove the hash_elem with the same kaddr */
+  e = hash_delete (&frame_table, &f.elem);
+  ASSERT (e);
+
+  palloc_free_page (kaddr);
+  free (hash_entry (e, struct frame_entry, elem));
+  if (!locked_outside)
+    {
+      lock_release (&frame_lock);
+      // printf("lock release\n");
+
+    }
+  // printf ("freed %p\n", kaddr);
+}
+
+/* Delete a page already freed by palloc with kernel address 
+  kaddr using the frame allocator */
+void
+frame_delete_page (void *kaddr)
+{
+  struct frame_entry f;
+  struct hash_elem *e;
 
   ASSERT (pg_ofs (kaddr) == 0);
 
   f.kaddr = kaddr;
   
-  lock_acquire (&frame_lock);
+   // printf ("lock_acquire");
   /* Remove the hash_elem with the same kaddr */
   e = hash_delete (&frame_table, &f.elem);
-  lock_release (&frame_lock);
+  // printf("lock release\n");
   
   ASSERT (e);
-
-  palloc_free_page (kaddr);
   free (hash_entry (e, struct frame_entry, elem));
+  // printf ("%s deleted %p\n", thread_current ()->name, kaddr);
 }
 
 /* Evict one frame to swap and get one free page */
@@ -121,8 +169,10 @@ void *
 frame_evict_get (enum palloc_flags flags)
 {
   struct frame_entry *f = frame_select_eviction ();
-  // printf ("evicted: %p\n", f->uaddr);
+  // printf ("evicted: %p\n", f->kaddr);
   ASSERT (f);
+
+  // ASSERT (supt_set_swap (f->t, f->uaddr))
 
   if (!supt_set_swap (f->t, f->uaddr))
     return NULL;      /* Failed to set swap */
@@ -140,23 +190,22 @@ frame_get_entry (void *kaddr)
   ASSERT (pg_ofs (kaddr) == 0);
   tmp.kaddr = kaddr;
 
-  lock_acquire (&frame_lock);
   e = hash_find (&frame_table, &tmp.elem);
-  lock_release (&frame_lock);
-  
-  if (e)
-    return hash_entry (e, struct frame_entry, elem);
-  return NULL; 
+
+  if (!e)
+    PANIC ("frame_get_entry: %p not found", kaddr);
+
+  return hash_entry (e, struct frame_entry, elem);
 }
 
-/* Set the frame at kaddr to locked */
+/* Set the frame at kaddr to locked. LOCK before calling */
 void
 frame_set_locked (void *kaddr)
 {
   frame_get_entry (kaddr)->locked = true;
 }
 
-/* Set the frame at kaddr to unlocked */
+/* Set the frame at kaddr to unlocked. LOCK before calling  */
 void
 frame_set_unlocked (void *kaddr)
 {

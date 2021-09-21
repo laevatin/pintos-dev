@@ -211,7 +211,7 @@ process_exit (void)
   clear_children_parent (cur);
 
   strtok_r (cur->name, " ", &dummy);
-  printf ("%s: exit(%d)\n", cur->name, cur->return_status);
+  printf ("%d, %s: exit(%d)\n", cur->tid, cur->name, cur->return_status);
 
   /* RELEASE ALL THE LOCKS */
 
@@ -226,6 +226,16 @@ process_exit (void)
       file_close (cur->elf);
       lock_release (&file_lock);
     }
+
+  /* The order of destroying supt and pagedir is crucial. 
+    This function will destroy the supt of the thread and 
+    also delete all the frame entries owned by the thread.
+    If this line is below the pagedir_destroy, there are 
+    some synchronization problems. If there is an interrupt
+    and switch to another thread which is acquiring memory, 
+    it may get a existing kaddr in frame table from palloc. */
+  supt_destroy (cur->supt);
+  cur->supt = NULL;
 
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -243,9 +253,6 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-  
-  supt_destroy (cur->supt);
-  cur->supt = NULL;
   
   /* Keep synchronized */
   old_level = intr_disable ();
