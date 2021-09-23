@@ -64,7 +64,8 @@ frame_init (void)
   list_init (&frame_list);
 }
 
-/* Get a page for the user address uaddr using the frame allocator */
+/* Get a page for the user address uaddr using the frame allocator.
+  The frame is locked by default. */
 void *
 frame_get_page (void *uaddr, enum palloc_flags flags) 
 {
@@ -86,7 +87,8 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   kaddr = palloc_get_page (flags);
   if (!kaddr) 
     kaddr = frame_evict_get (flags);
-
+  // printf ("%d get frame %p\n", thread_current ()->tid, uaddr);
+  
   ASSERT (kaddr); /* Failed when swap is full */
   
   entry = malloc (sizeof (struct frame_entry));
@@ -95,7 +97,7 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   entry->uaddr = uaddr;
   entry->kaddr = kaddr;
   entry->t = thread_current ();
-  entry->locked = false;
+  entry->locked = true;
 
   hash_insert (&frame_table, &entry->elem);
   list_push_back (&frame_list, &entry->listelem);

@@ -60,7 +60,7 @@ write_to_swap (void *addr)
     block_write (swap.swap_block, start + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
   
-  // printf ("add slot: %d\n", available);
+  // printf ("add slot: %d %p|\n", available, addr);
 
   bitmap_set (swap.swap_used_map, available, true);
   lock_release (&swap.swap_lock);
@@ -76,13 +76,13 @@ read_from_swap (block_sector_t sector, void *addr)
 
   ASSERT (pg_ofs (addr) == 0);
   lock_acquire (&swap.swap_lock);
-  ASSERT (bitmap_test (swap.swap_used_map, sector / SECTORS_PG));
 
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_read (swap.swap_block, sector + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
   
   free_swap_slot (sector);
+  // printf ("free slot: %d %p|\n", sector / SECTORS_PG, addr);
   lock_release (&swap.swap_lock);
 }
 
@@ -91,7 +91,7 @@ void
 free_swap_slot (block_sector_t sector) 
 {
   size_t available = sector / SECTORS_PG;
-  // printf ("free slot: %d\n", available);
+
   ASSERT (bitmap_test (swap.swap_used_map, available))
   bitmap_set (swap.swap_used_map, available, false);
 }

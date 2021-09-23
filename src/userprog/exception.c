@@ -149,11 +149,13 @@ page_fault (struct intr_frame *f)
   /* Count page faults. */
   page_fault_cnt++;
 
+  // printf ("in page fault %d\n", thread_current ()->tid);
+
   /* Determine cause. */
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
-  
+
   /* Stack growth */
   is_valid_stack = (((unsigned)PHYS_BASE) - fault_addr <= STACK_SIZE)
                     && (fault_addr < ((unsigned)PHYS_BASE));
@@ -173,9 +175,12 @@ page_fault (struct intr_frame *f)
         && supt_load_page (t->supt, fault_page))
     {
       supt_unlock_mem (t->supt, fault_page, 0);
+      // printf ("out page fault %d\n", thread_current ()->tid);
+
       return;
     }
-    
+  // printf ("out page fault %d\n", thread_current ()->tid);
+  
   if (not_present || (is_kernel_vaddr (fault_page) && user) || write)
     exit (-1);
 

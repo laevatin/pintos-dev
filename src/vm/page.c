@@ -103,8 +103,8 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   ASSERT (entry);
 
   ASSERT (uaddr == pg_round_down (uaddr));
-  // printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
   lock_acquire (&table->supt_lock);
+  // printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
 
   entry->uaddr = uaddr;
   entry->swap_sector = -1;
@@ -265,7 +265,8 @@ supt_load_page (struct supt_table *table, void *uaddr)
   
   /* What if the frame is evicted before this? */
   /* Update: there is a bug. Must keep synchronized */
-  frame_set_locked (kaddr);
+  /* Update: the frame is locked in frame_get_page */
+  // frame_set_locked (kaddr);
 
   /* Set the mapping relation to the hardware page table. */
   if (!pagedir_set_page (t->pagedir, uaddr, kaddr, true))
@@ -306,7 +307,7 @@ supt_set_swap (struct thread *t, void *uaddr)
     lock_acquire (&t->supt->supt_lock);
     locked_outside = false;
   }
-
+  // printf (" %d thread %d set swap %p\n", thread_current ()->tid, t->tid, uaddr);
   entry = supt_look_up (t->supt, uaddr);
   // ASSERT (entry);
   if (!entry)
@@ -351,6 +352,7 @@ supt_set_swap (struct thread *t, void *uaddr)
   frame_free_page (entry->kaddr);
 
   entry->dirty = false;
+  entry->kaddr = NULL;
 
 supt_set_swap_end:
   if (!locked_outside)

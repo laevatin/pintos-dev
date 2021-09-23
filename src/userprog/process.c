@@ -574,6 +574,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
           frame_free_page (kpage);
           return false; 
         }
+      
+      /* Avoid the frame to be evicted before installed to supt */
+      frame_set_unlocked (kpage);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -597,7 +600,11 @@ setup_stack (void **esp)
     {
       success = install_page (upage, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        {
+          *esp = PHYS_BASE;
+          /* Avoid the frame to be evicted before installed to supt */
+          frame_set_unlocked (kpage);
+        }
       else
         frame_free_page (kpage);
     }
