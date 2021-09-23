@@ -76,6 +76,8 @@ read_from_swap (block_sector_t sector, void *addr)
 
   ASSERT (pg_ofs (addr) == 0);
   lock_acquire (&swap.swap_lock);
+  ASSERT (bitmap_test (swap.swap_used_map, sector / SECTORS_PG));
+
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_read (swap.swap_block, sector + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));

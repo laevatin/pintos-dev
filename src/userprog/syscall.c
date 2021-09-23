@@ -223,13 +223,13 @@ syscall_read (struct intr_frame *f)
       struct file *fl = thread_get_file (thread_current (), fd);
       if (!fl)
         return;
+
+      lock_acquire (&file_lock);
       if (!supt_preload_mem (thread_current ()->supt, buffer, len))
         exit(-1);
-      lock_acquire (&file_lock);
       f->eax = file_read (fl, buffer, len);
-      lock_release (&file_lock);
       supt_unlock_mem (thread_current ()->supt, buffer, len);
-
+      lock_release (&file_lock);
     }
 } 
 
@@ -254,12 +254,12 @@ syscall_write (struct intr_frame *f)
       struct file *fl = thread_get_file (thread_current (), fd);
       if (!fl)
         return;
+      lock_acquire (&file_lock);
       if (!supt_preload_mem (thread_current ()->supt, buffer, len))
         exit(-1);
-      lock_acquire (&file_lock);
       f->eax = file_write (fl, buffer, len);
-      lock_release (&file_lock);
       supt_unlock_mem (thread_current ()->supt, buffer, len);
+      lock_release (&file_lock);
     }
 } 
 

@@ -77,10 +77,11 @@ supt_destroy (struct supt_table *table)
         frame_delete_page (entry->kaddr);
     }
 
+  hash_destroy (&table->supt_hash, entry_destory);
+
   lock_release (&table->supt_lock);
   lock_release (&frame_lock);
 
-  hash_destroy (&table->supt_hash, entry_destory);
   free (table);
 }
 
@@ -100,7 +101,7 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   ASSERT (entry);
 
   ASSERT (uaddr == pg_round_down (uaddr));
-  printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
+  // printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
   lock_acquire (&table->supt_lock);
 
   entry->uaddr = uaddr;
@@ -126,7 +127,7 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
   hash_insert (&table->supt_hash, &entry->elem);
   lock_release (&table->supt_lock);
 
-  // printf ("installed: %p.\n", uaddr);  
+  // printf ("%d installed: %p.\n", thread_current()->tid, uaddr);  
 
   return true;
 }
@@ -189,11 +190,15 @@ bool
 supt_contains (struct supt_table *table, void *uaddr)
 {
   struct supt_entry entry;
+  bool find;
 
   ASSERT (is_user_vaddr (uaddr));
   entry.uaddr = pg_round_down (uaddr);
-  
-  return !!hash_find (&table->supt_hash, &entry.elem);
+
+  lock_acquire (&table->supt_lock);
+  find = !!hash_find (&table->supt_hash, &entry.elem);
+  lock_release (&table->supt_lock);
+  return find;
 }
 
 /* Get the supplemental page table entry of uaddr in table.
@@ -218,26 +223,19 @@ supt_look_up (struct supt_table *table, void *uaddr)
 bool 
 supt_load_page (struct supt_table *table, void *uaddr)
 {
-  struct supt_entry tmp;
   struct supt_entry *entry;
-  struct hash_elem *e;
   void *kaddr;
-
-  ASSERT (is_user_vaddr (uaddr));
-  tmp.uaddr = pg_round_down (uaddr);
-  
-  e = hash_find (&table->supt_hash, &tmp.elem);
-
-  /* No such page in the page table */
-  if (!e) 
-    return false;
 
   /* frame table should be locked */
   lock_acquire (&frame_lock);
   lock_acquire (&table->supt_lock);
   
-  entry = hash_entry (e, struct supt_entry, elem);
-  printf ("%d load %p \n", thread_current ()->tid, uaddr);
+  entry = supt_look_up (table, uaddr);
+  // ASSERT (entry);
+  if (!entry)
+    goto supt_load_page_err;
+
+  // printf ("%d load %p \n", thread_current ()->tid, uaddr);
   switch (entry->state)
     {
     case PG_IN_MEM:
@@ -270,9 +268,7 @@ supt_load_page (struct supt_table *table, void *uaddr)
   if (!pagedir_set_page (thread_current ()->pagedir, uaddr, kaddr, true))
     {
       frame_free_page (kaddr);
-      lock_release (&frame_lock);
-      lock_release (&table->supt_lock);
-      return false;
+      goto supt_load_page_err;
     }
 
   entry->state = PG_IN_MEM;
@@ -281,6 +277,11 @@ supt_load_page (struct supt_table *table, void *uaddr)
   lock_release (&table->supt_lock);
 
   return true;
+
+supt_load_page_err:
+  lock_release (&frame_lock);
+  lock_release (&table->supt_lock);
+  return false;
 }
 
 /* Set the page at uaddr in the supt table of thread t to SWAP. 
@@ -291,35 +292,27 @@ supt_load_page (struct supt_table *table, void *uaddr)
 bool
 supt_set_swap (struct thread *t, void *uaddr)
 {
-  struct supt_entry tmp;
   struct supt_entry *entry;
-  struct hash_elem *e;
   bool locked_outside = true;
 
-  ASSERT (is_user_vaddr (uaddr));
-  tmp.uaddr = pg_round_down (uaddr);
+  if (!lock_held_by_current_thread (&t->supt->supt_lock))
+  {
+    lock_acquire (&t->supt->supt_lock);
+    locked_outside = false;
+  }
 
-  e = hash_find (&t->supt->supt_hash, &tmp.elem);
-
-  /* No such page in the page table */
-  if (!e) 
-    return false;
-
-  entry = hash_entry (e, struct supt_entry, elem);
+  entry = supt_look_up (t->supt, uaddr);
+  // ASSERT (entry);
+  if (!entry)
+    goto supt_set_swap_err;
 
   if (entry->state == PG_IN_SWAP || entry->state == PG_FILE_MAPPED)
-    return true;
+    goto supt_set_swap_end;
 
   /* frame_lock and supt_lock may cause dead lock.
   when a thread is holding the frame_lock to require another thread 
   to evict one page, but the other thread is holding the supt_lock 
   and waiting for frame_lock */
-
-  if (!lock_held_by_current_thread (&t->supt->supt_lock))
-    {
-      lock_acquire (&t->supt->supt_lock);
-      locked_outside = false;
-    }
 
   if (!entry->filefrom)
     {
@@ -343,16 +336,24 @@ supt_set_swap (struct thread *t, void *uaddr)
   //     entry->state = PG_IN_MEM;
   //     return false;
   //   }
-  
-  frame_free_page (entry->kaddr);
+
+  /* The order is crucial */
   pagedir_clear_page (t->pagedir, uaddr);
+  frame_free_page (entry->kaddr);
+
+supt_set_swap_end:
+  if (!locked_outside)
+    lock_release (&t->supt->supt_lock);
+
+  // printf ("%d set to swap %p \n", t->tid, uaddr);
+  return true;
+
+supt_set_swap_err:
 
   if (!locked_outside)
     lock_release (&t->supt->supt_lock);
-  
-  printf ("%d set to swap %p \n", t->tid, uaddr);
 
-  return true;
+  return false;
 }
 
 /* Avoid page fault on writing or reading to file system 
@@ -385,6 +386,7 @@ supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
   void *kaddr;
 
   lock_acquire (&frame_lock);
+  lock_acquire (&table->supt_lock);
   
   while (base <= (uintptr_t)(uaddr + size))
     {
@@ -395,6 +397,7 @@ supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
     }
   
   lock_release (&frame_lock);
+  lock_release (&table->supt_lock);
 }
 
 /* Check if ANY page starts from uaddr with size is exist. */
@@ -404,15 +407,21 @@ supt_check_exist (struct supt_table *table, void *uaddr, size_t size)
   uintptr_t base = (uintptr_t) pg_round_down (uaddr);
   struct supt_entry *entry;
 
+  lock_acquire (&table->supt_lock);
+
   while (base <= (uintptr_t)(uaddr + size))
     {
       entry = supt_look_up (table, (void *)base);
       if (entry) 
-        return true;
+        {
+          lock_release (&table->supt_lock);
+          return true;
+        }
 
       base += PGSIZE;
     }
 
+  lock_release (&table->supt_lock);
   return false;
 }
 

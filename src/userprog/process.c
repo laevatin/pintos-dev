@@ -211,7 +211,10 @@ process_exit (void)
   clear_children_parent (cur);
 
   strtok_r (cur->name, " ", &dummy);
-  printf ("%d, %s: exit(%d)\n", cur->tid, cur->name, cur->return_status);
+  printf ("%s: exit(%d)\n", cur->name, cur->return_status);
+
+  // if (cur->return_status == -1)
+  //   debug_backtrace ();
 
   /* RELEASE ALL THE LOCKS */
 

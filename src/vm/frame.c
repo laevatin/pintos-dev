@@ -6,7 +6,6 @@
 #include "threads/malloc.h"
 #include "threads/synch.h"
 #include "threads/pte.h"
-#include "lib/random.h"
 #include <stdio.h>
 
 /* Lock to keep data structures synchonized. 
@@ -15,6 +14,10 @@ struct lock frame_lock;
 
 /* An hash table with key=kaddr, v=frame_entry. */
 static struct hash frame_table;
+
+/* A list for clock algorithm */
+static struct list frame_list;
+static struct list_elem *clock = NULL;
 
 /* Entry struct of frame table. */
 struct frame_entry
@@ -29,6 +32,7 @@ struct frame_entry
     bool locked;
 
     struct hash_elem elem;
+    struct list_elem listelem;
   };
 
 /* Hash function for frame_entry, since the kaddr is often different, we
@@ -49,6 +53,7 @@ entry_less (const struct hash_elem *a, const struct hash_elem *b, void *aux UNUS
 }
 
 static struct frame_entry *frame_select_eviction (void);
+static void next_clock (void);
 
 /* Initialize the frame table. */
 void 
@@ -56,7 +61,7 @@ frame_init (void)
 {
   lock_init (&frame_lock);
   hash_init (&frame_table, entry_hash, entry_less, NULL);
-  random_init (153);
+  list_init (&frame_list);
 }
 
 /* Get a page for the user address uaddr using the frame allocator */
@@ -85,11 +90,7 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   ASSERT (kaddr); /* Failed when swap is full */
   
   entry = malloc (sizeof (struct frame_entry));
-  if (!entry)
-    {
-      /* No space for entry */
-      return NULL;
-    }
+  ASSERT (entry);
 
   entry->uaddr = uaddr;
   entry->kaddr = kaddr;
@@ -97,12 +98,10 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   entry->locked = false;
 
   hash_insert (&frame_table, &entry->elem);
+  list_push_back (&frame_list, &entry->listelem);
 
   if (!locked_outside)
-    {
-      lock_release (&frame_lock);
-      // printf("lock release\n");
-    }
+    lock_release (&frame_lock);
 
   // printf ("%s get %p\n", thread_current ()->name, kaddr);
   return kaddr;
@@ -114,6 +113,7 @@ frame_free_page (void *kaddr)
 {
   struct frame_entry f;
   struct hash_elem *e;
+  struct frame_entry *entry;
   bool locked_outside = true;
 
   ASSERT (pg_ofs (kaddr) == 0);
@@ -131,14 +131,18 @@ frame_free_page (void *kaddr)
   e = hash_delete (&frame_table, &f.elem);
   ASSERT (e);
 
-  palloc_free_page (kaddr);
-  free (hash_entry (e, struct frame_entry, elem));
-  if (!locked_outside)
-    {
-      lock_release (&frame_lock);
-      // printf("lock release\n");
+  entry = hash_entry (e, struct frame_entry, elem);
+  list_remove (&entry->listelem);
+  // printf ("remove: %p\n", entry->uaddr);
 
-    }
+  if (&entry->listelem == clock)
+    next_clock ();
+
+  palloc_free_page (kaddr);
+  free (entry);
+
+  if (!locked_outside)
+    lock_release (&frame_lock);
   // printf ("freed %p\n", kaddr);
 }
 
@@ -149,6 +153,7 @@ frame_delete_page (void *kaddr)
 {
   struct frame_entry f;
   struct hash_elem *e;
+  struct frame_entry *entry;
 
   ASSERT (pg_ofs (kaddr) == 0);
 
@@ -157,10 +162,17 @@ frame_delete_page (void *kaddr)
    // printf ("lock_acquire");
   /* Remove the hash_elem with the same kaddr */
   e = hash_delete (&frame_table, &f.elem);
-  // printf("lock release\n");
-  
   ASSERT (e);
-  free (hash_entry (e, struct frame_entry, elem));
+
+  entry = hash_entry (e, struct frame_entry, elem);
+  list_remove (&entry->listelem);
+  // printf ("remove: %p\n", entry->uaddr);
+
+  if (&entry->listelem == clock)
+    next_clock ();
+
+  // printf("lock release\n");
+  free (entry);
   // printf ("%s deleted %p\n", thread_current ()->name, kaddr);
 }
 
@@ -172,10 +184,10 @@ frame_evict_get (enum palloc_flags flags)
   // printf ("evicted: %p\n", f->kaddr);
   ASSERT (f);
 
-  // ASSERT (supt_set_swap (f->t, f->uaddr))
+  ASSERT (supt_set_swap (f->t, f->uaddr))
 
-  if (!supt_set_swap (f->t, f->uaddr))
-    return NULL;      /* Failed to set swap */
+  // if (!supt_set_swap (f->t, f->uaddr))
+  //   return NULL;      /* Failed to set swap */
 
   return palloc_get_page (flags);
 }
@@ -216,31 +228,35 @@ frame_set_unlocked (void *kaddr)
 static struct frame_entry *
 frame_select_eviction ()
 {
-  size_t rnd = random_ulong () % hash_size (&frame_table);
-  int count = 10;
-  
-  struct hash_iterator i;
-
+  int count = hash_size (&frame_table) * 2;
+  struct frame_entry *entry;
+  // printf ("----------------------\n");
   while (count--)
     {
-      hash_first (&i, &frame_table);
-      while (hash_next (&i))
-        {
-          struct frame_entry *f = hash_entry (hash_cur (&i), 
-                                                struct frame_entry, elem);
-          // struct supt_entry *entry = supt_look_up (f->t->supt, f->uaddr);
-          // ASSERT (entry);
-          if (f->locked)
-            continue;
-          // if (entry->locked)
-          //   continue;
-
-          if (rnd-- == 0)
-            return f;
-        }
+      next_clock ();
+      entry = list_entry (clock, struct frame_entry, listelem);
+      // printf ("entry: %p\n", entry->uaddr);
+      if (entry->locked)
+        continue;
+      else if (pagedir_is_accessed (entry->t->pagedir, entry->uaddr)) {
+        pagedir_set_accessed (entry->t->pagedir, entry->uaddr, false);
+        continue;
+      }
+      return entry;
     }
   
   NOT_REACHED ();
   /* Not reached */
   return NULL;
+}
+
+static void 
+next_clock ()
+{
+  if (!clock)
+    clock = list_begin (&frame_list);
+  else 
+    clock = list_next (clock);
+  if (clock == list_end (&frame_list))
+    clock = list_begin (&frame_list);
 }
