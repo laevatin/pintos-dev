@@ -225,7 +225,7 @@ syscall_read (struct intr_frame *f)
         return;
 
       lock_acquire (&file_lock);
-      if (!supt_preload_mem (thread_current ()->supt, buffer, len))
+      if (!supt_preload_mem (thread_current ()->supt, buffer, f->esp, len))
         exit(-1);
       f->eax = file_read (fl, buffer, len);
       supt_unlock_mem (thread_current ()->supt, buffer, len);
@@ -255,7 +255,7 @@ syscall_write (struct intr_frame *f)
       if (!fl)
         return;
       lock_acquire (&file_lock);
-      if (!supt_preload_mem (thread_current ()->supt, buffer, len))
+      if (!supt_preload_mem (thread_current ()->supt, buffer, f->esp, len))
         exit(-1);
       f->eax = file_write (fl, buffer, len);
       supt_unlock_mem (thread_current ()->supt, buffer, len);

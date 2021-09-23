@@ -14,6 +14,8 @@
 extern struct lock frame_lock;
 
 static void load_file_to_page (struct supt_table *table, void *uaddr);
+static void supt_update_dirty (struct supt_entry *entry, uint32_t *pd);
+
 /* hash functions */
 static unsigned 
 entry_hash (const struct hash_elem *e, void *aux UNUSED)
@@ -224,6 +226,7 @@ bool
 supt_load_page (struct supt_table *table, void *uaddr)
 {
   struct supt_entry *entry;
+  struct thread *t = thread_current ();
   void *kaddr;
 
   /* frame table should be locked */
@@ -265,12 +268,15 @@ supt_load_page (struct supt_table *table, void *uaddr)
   frame_set_locked (kaddr);
 
   /* Set the mapping relation to the hardware page table. */
-  if (!pagedir_set_page (thread_current ()->pagedir, uaddr, kaddr, true))
+  if (!pagedir_set_page (t->pagedir, uaddr, kaddr, true))
     {
       frame_free_page (kaddr);
       goto supt_load_page_err;
     }
 
+  pagedir_set_dirty (t->pagedir, uaddr, false);
+  pagedir_set_dirty (t->pagedir, kaddr, false);
+  entry->dirty = false;
   entry->state = PG_IN_MEM;
   entry->kaddr = kaddr;
   lock_release (&frame_lock);
@@ -309,6 +315,8 @@ supt_set_swap (struct thread *t, void *uaddr)
   if (entry->state == PG_IN_SWAP || entry->state == PG_FILE_MAPPED)
     goto supt_set_swap_end;
 
+  supt_update_dirty (entry, t->pagedir);
+
   /* frame_lock and supt_lock may cause dead lock.
   when a thread is holding the frame_lock to require another thread 
   to evict one page, but the other thread is holding the supt_lock 
@@ -326,7 +334,8 @@ supt_set_swap (struct thread *t, void *uaddr)
       /* Not used and not the error number */
       entry->swap_sector = 0xFFFFFFFE;
       entry->state = PG_FILE_MAPPED;
-      file_write_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
+      if (entry->dirty)
+        file_write_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
     }
 
   /* Hard to recover */
@@ -340,6 +349,8 @@ supt_set_swap (struct thread *t, void *uaddr)
   /* The order is crucial */
   pagedir_clear_page (t->pagedir, uaddr);
   frame_free_page (entry->kaddr);
+
+  entry->dirty = false;
 
 supt_set_swap_end:
   if (!locked_outside)
@@ -359,17 +370,21 @@ supt_set_swap_err:
 /* Avoid page fault on writing or reading to file system 
   by load the memory required in advance. */
 bool 
-supt_preload_mem (struct supt_table *table, void *uaddr, size_t size)
+supt_preload_mem (struct supt_table *table, void *uaddr, void *esp, size_t size)
 {
   uintptr_t base = (uintptr_t) pg_round_down (uaddr);
 
-  /* Stack growth, need to install new zero page */
-  if ((((unsigned)PHYS_BASE) - base <= STACK_SIZE)
-                    && (base < ((unsigned)PHYS_BASE)))
-    return true;
-
   while (base <= (uintptr_t)(uaddr + size))
     {
+      // printf ("base: %p\n", (void *)base);
+      /* Stack growth, need to install new zero page
+        Stack growth may mix with load stack page */
+      if (!supt_contains (table, (void *)base) 
+            && (((unsigned)PHYS_BASE) - base <= STACK_SIZE)
+            && (base < ((unsigned)PHYS_BASE)
+            && (uaddr > (void *)(((char *)esp) - 32))))
+        supt_install_page (table, (void *)base, NULL, PG_ZERO);
+
       if (!supt_load_page (table, (void *)base))
         return false;
       base += PGSIZE;
@@ -439,4 +454,12 @@ load_file_to_page (struct supt_table *table, void *uaddr)
   sf = entry->filefrom;
 
   file_read_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
+}
+
+/* Update the dirty bit on supt_entry by looking up the pagedir. */
+static void 
+supt_update_dirty (struct supt_entry *entry, uint32_t *pd)
+{
+  entry->dirty = entry->dirty || pagedir_is_dirty (pd, entry->uaddr);
+  entry->dirty = entry->dirty || pagedir_is_dirty (pd, entry->kaddr);
 }
