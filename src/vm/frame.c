@@ -9,7 +9,7 @@
 #include <stdio.h>
 
 /* Lock to keep data structures synchonized. 
-  Users: frame.c page.c */
+  Users: frame.c page.c process.c */
 struct lock frame_lock;
 
 /* An hash table with key=kaddr, v=frame_entry. */

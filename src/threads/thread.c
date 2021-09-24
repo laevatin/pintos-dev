@@ -789,13 +789,17 @@ get_child_thread (struct thread *t, tid_t threadtid)
 void
 remove_child_thread (struct thread *t, tid_t threadtid)
 {
-  struct thread *child = get_child_thread (t, threadtid);
+  struct thread *child;
+  enum intr_level old_level = intr_disable ();
+  child = get_child_thread (t, threadtid);
 
   ASSERT (child->exited);
   ASSERT (child->status == THREAD_BLOCKED)
 
   thread_unblock (child);
   list_remove (&child->child_elem);
+
+  intr_set_level (old_level);
 }
 
 #ifdef USERPROG

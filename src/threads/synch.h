@@ -51,6 +51,6 @@ void cond_broadcast (struct condition *, struct lock *);
 #define barrier() asm volatile ("" : : : "memory")
 
 /* Depth limit on nested priority donation */
-#define PRI_DONATION_LIMIT 8
+#define PRI_DONATION_LIMIT 0
 
 #endif /* threads/synch.h */

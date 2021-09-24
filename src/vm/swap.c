@@ -14,7 +14,6 @@ struct swap_struct
   {
     struct bitmap *swap_used_map;
     struct block *swap_block;
-    struct lock swap_lock;
     size_t swap_size;
   };
 
@@ -27,7 +26,6 @@ swap_init ()
   swap.swap_block = block_get_role (BLOCK_SWAP);
   swap.swap_size = block_size (swap.swap_block) / SECTORS_PG;
   swap.swap_used_map = bitmap_create (swap.swap_size);
-  lock_init(&swap.swap_lock); 
 
   ASSERT (swap.swap_block);
   ASSERT (swap.swap_used_map);
@@ -45,8 +43,6 @@ write_to_swap (void *addr)
 
   // ASSERT (is_user_vaddr (addr));
   ASSERT (pg_ofs (addr) == 0);
-
-  lock_acquire (&swap.swap_lock);
   available = bitmap_scan (swap.swap_used_map, 0, 1, false);
 
   /* No available swap space */
@@ -60,10 +56,9 @@ write_to_swap (void *addr)
     block_write (swap.swap_block, start + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
   
-  // printf ("add slot: %d %p|\n", available, addr);
+  // printf ("add slot: %d %p |\n", available, addr);
 
   bitmap_set (swap.swap_used_map, available, true);
-  lock_release (&swap.swap_lock);
 
   return start;
 }
@@ -74,16 +69,15 @@ read_from_swap (block_sector_t sector, void *addr)
 {
   size_t idx;
 
+  ASSERT (sector != 0xFFFFFFFF && sector != 0xFFFFFFFE);
   ASSERT (pg_ofs (addr) == 0);
-  lock_acquire (&swap.swap_lock);
 
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_read (swap.swap_block, sector + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
   
   free_swap_slot (sector);
-  // printf ("free slot: %d %p|\n", sector / SECTORS_PG, addr);
-  lock_release (&swap.swap_lock);
+  // printf ("free slot: %d %p |\n", sector / SECTORS_PG, addr);
 }
 
 /* free the swap slot */

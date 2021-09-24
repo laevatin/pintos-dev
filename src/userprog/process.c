@@ -26,6 +26,7 @@ static bool load (const char *cmdline, void (**eip) (void), void **esp);
 static void clear_children_parent (struct thread *t);
 
 extern struct lock file_lock;
+extern struct lock frame_lock;
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -576,7 +577,9 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
         }
       
       /* Avoid the frame to be evicted before installed to supt */
+      lock_acquire (&frame_lock);
       frame_set_unlocked (kpage);
+      lock_release (&frame_lock);
 
       /* Advance. */
       read_bytes -= page_read_bytes;
@@ -603,7 +606,9 @@ setup_stack (void **esp)
         {
           *esp = PHYS_BASE;
           /* Avoid the frame to be evicted before installed to supt */
+          lock_acquire (&frame_lock);
           frame_set_unlocked (kpage);
+          lock_release (&frame_lock);
         }
       else
         frame_free_page (kpage);

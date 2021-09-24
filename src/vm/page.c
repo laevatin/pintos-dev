@@ -243,8 +243,8 @@ supt_load_page (struct supt_table *table, void *uaddr)
     {
     case PG_IN_MEM:
       frame_set_locked (entry->kaddr);
-      lock_release (&frame_lock);
       lock_release (&table->supt_lock);
+      lock_release (&frame_lock);
       return true;
     case PG_ZERO:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
@@ -252,6 +252,7 @@ supt_load_page (struct supt_table *table, void *uaddr)
     case PG_IN_SWAP:
       kaddr = frame_get_page (uaddr, PAL_USER);
       read_from_swap (entry->swap_sector, kaddr);
+      entry->swap_sector = -1;
       break;
     case PG_FILE_MAPPED:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
@@ -280,14 +281,14 @@ supt_load_page (struct supt_table *table, void *uaddr)
   entry->dirty = false;
   entry->state = PG_IN_MEM;
   entry->kaddr = kaddr;
-  lock_release (&frame_lock);
   lock_release (&table->supt_lock);
+  lock_release (&frame_lock);
 
   return true;
 
 supt_load_page_err:
-  lock_release (&frame_lock);
   lock_release (&table->supt_lock);
+  lock_release (&frame_lock);
   return false;
 }
 
@@ -412,9 +413,9 @@ supt_unlock_mem (struct supt_table *table, void *uaddr, size_t size)
       frame_set_unlocked (kaddr);
       base += PGSIZE;
     }
-  
+    
+  lock_release (&table->supt_lock);  
   lock_release (&frame_lock);
-  lock_release (&table->supt_lock);
 }
 
 /* Check if ANY page starts from uaddr with size is exist. */
