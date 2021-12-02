@@ -477,7 +477,7 @@ donate_priority (struct thread *t, int depth, int prev_priority)
 static int
 get_highest_priority_locks (struct thread *t, int depth)
 {
-  struct list_elem *e1, *e2;
+  struct list_elem *e1;
   int max_donated = PRI_MIN;
   
   if (depth <= 0) 

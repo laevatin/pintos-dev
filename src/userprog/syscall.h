@@ -38,5 +38,7 @@ uint32_t syscall_write (int *);
 uint32_t syscall_seek (int *);
 uint32_t syscall_tell (int *);
 uint32_t syscall_close (int *);
+uint32_t syscall_mmap (int *);
+uint32_t syscall_munmap (int *);
 
 #endif /* userprog/syscall.h */

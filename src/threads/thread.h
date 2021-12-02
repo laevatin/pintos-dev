@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "synch.h"
 #include "fixed-point.h"
+#include "filesys/file.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -222,6 +223,7 @@ struct thread *highest_priority_thread (struct list *thread_list,
 struct thread *get_child_thread (struct thread *t, tid_t threadtid);
 void remove_child_thread (struct thread *t, tid_t threadtid);
 
+/* file management */
 struct filefd *thread_get_filefd (struct thread *t, int fd);
 struct file *thread_get_file (struct thread *t, int fd);
 int thread_add_file (struct thread *t, struct file *f);
@@ -229,4 +231,10 @@ void thread_remove_file (struct thread *t, int fd);
 int thread_nextfd (struct thread *t);
 
 bool is_thread (struct thread *);
+
+/* memory map management */
+int thread_add_mmap (struct thread *t, struct file *fl, void *uaddr, size_t size);
+void *thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f);
+void thread_munmap_all (struct thread *t);
+
 #endif /* threads/thread.h */

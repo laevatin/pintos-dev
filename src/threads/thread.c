@@ -18,6 +18,7 @@
 #include "userprog/process.h"
 #include "userprog/syscall.h"
 #endif
+#include "vm/page.h"
 
 /* Random value for struct thread's `magic' member.
    Used to detect stack overflow.  See the big comment at the top
@@ -883,7 +884,7 @@ thread_remove_file (struct thread *t, int fd)
 #endif
 
 /* Get the next memory map id in thread t. */
-int 
+static int 
 thread_nextmapid (struct thread *t)
 {
   return t->nextmapid++;

@@ -2,12 +2,15 @@
 #include <stdio.h>
 #include <syscall-nr.h>
 #include <string.h>
+#include "vm/page.h"
+#include "vm/frame.h"
 
 static void syscall_handler (struct intr_frame *f);
 
 static syscall syscall_vec[SYSCALLNUM];
 
 static void check_frame (struct intr_frame *f);
+static uint32_t mmap_end (uint32_t val);
 
 /* Here esp must be type of int* */
 #define ARG0(esp) (*esp)
@@ -38,16 +41,20 @@ syscall_init (void)
   syscall_vec[SYS_SEEK    ] = syscall_seek;
   syscall_vec[SYS_TELL    ] = syscall_tell;
   syscall_vec[SYS_CLOSE   ] = syscall_close;
+  syscall_vec[SYS_MMAP    ] = syscall_mmap;
+  syscall_vec[SYS_MUNMAP  ] = syscall_munmap;
 }
 
 /* Entry of system call. */
 static void
 syscall_handler (struct intr_frame *f) 
 {
+  thread_current ()->esp = f->esp;
   int *sp = f->esp;
   check_frame (f);
   /* Set the return value. */
   f->eax = syscall_vec[ARG0 (sp)] (sp);
+  thread_current ()->esp = NULL;
 }
 
 /* Exit the process with return status. */
@@ -321,13 +328,12 @@ close_all_file (struct thread *t)
 }
 
 /* System call for mapping the file open as fd into addr */
-void
-syscall_mmap (struct intr_frame *f)
+uint32_t
+syscall_mmap (int *esp)
 {
-  int *sp = f->esp;
-  int fd = *(sp + 1);
-  
-  void *addr = (void *)*(sp + 2);
+  int fd = ARG1 (esp);
+  uint32_t retval = -1;
+  void *addr = (void *) ARG2 (esp);
 
   struct thread *cur = thread_current ();
   struct file *fl;
@@ -336,20 +342,19 @@ syscall_mmap (struct intr_frame *f)
   uintptr_t base = (uintptr_t)addr;
   uintptr_t top;
 
-  f->eax = -1;
   if (!addr || fd <= 1 || pg_ofs (addr) != 0)
-    return;
+    return retval;
 
   fl = thread_get_file (cur, fd);
   lock_acquire (&file_lock);
   /* Reopen the file */
   fl = file_reopen (fl);
   if (!fl) 
-    return mmap_end ();
+    return mmap_end (retval);
 
   file_len = file_length (fl);
   if (file_len == 0 || supt_check_exist (cur->supt, addr, file_len))
-    return mmap_end ();
+    return mmap_end (retval);
   
   /* Install it to the page table */
   top = (uintptr_t)(addr + file_len);
@@ -362,36 +367,36 @@ syscall_mmap (struct intr_frame *f)
     }
   
   /* Get the mmapid and add it to current thread */
-  f->eax = thread_add_mmap (cur, fl, addr, file_len);
+  retval = thread_add_mmap (cur, fl, addr, file_len);
 
-  return mmap_end ();
+  return mmap_end (retval);
 }
 
-static void mmap_end ()
+static uint32_t mmap_end (uint32_t val)
 {
   lock_release (&file_lock);
-  return;
+  return val;
 }
 
 /* Unmaps the mapping designated by mmap */
-void
-syscall_munmap (struct intr_frame *f)
+uint32_t
+syscall_munmap (int *esp)
 {
-  int *sp = f->esp;
-  int mapid = *(sp + 1);
+  int mapid = ARG1 (esp);
+  uint32_t retval = -1;
 
   off_t file_len;
   struct thread *cur = thread_current ();
   struct file *fl;
   void *addr = thread_munmap (cur, mapid, &file_len, &fl);
 
-  f->eax = -1;
   if (!addr)
-    return;
+    return retval;
 
   supt_remove_filemap (cur->supt, addr, file_len);
 
   lock_acquire (&file_lock);
   file_close (fl);
   lock_release (&file_lock);
+  return 0;
 }
