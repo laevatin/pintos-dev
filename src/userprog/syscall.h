@@ -23,20 +23,20 @@ void exit (int status);
 
 void syscall_init (void);
 
-typedef void (*syscall)(struct intr_frame *); 
+typedef uint32_t (*syscall)(int *); 
 
-void syscall_exit(struct intr_frame *);
-void syscall_halt(struct intr_frame *);
-void syscall_exec(struct intr_frame *);
-void syscall_wait(struct intr_frame *);
-void syscall_create(struct intr_frame *);
-void syscall_remove(struct intr_frame *);
-void syscall_open(struct intr_frame *);
-void syscall_filesize(struct intr_frame *);
-void syscall_read(struct intr_frame *);
-void syscall_write(struct intr_frame *);
-void syscall_seek(struct intr_frame *);
-void syscall_tell(struct intr_frame *);
-void syscall_close(struct intr_frame *);
+uint32_t syscall_exit (int *);
+uint32_t syscall_halt (int *);
+uint32_t syscall_exec (int *);
+uint32_t syscall_wait (int *);
+uint32_t syscall_create (int *);
+uint32_t syscall_remove (int *);
+uint32_t syscall_open (int *);
+uint32_t syscall_filesize (int *);
+uint32_t syscall_read (int *);
+uint32_t syscall_write (int *);
+uint32_t syscall_seek (int *);
+uint32_t syscall_tell (int *);
+uint32_t syscall_close (int *);
 
 #endif /* userprog/syscall.h */

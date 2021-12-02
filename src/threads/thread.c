@@ -28,6 +28,9 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* Number of processes in THREAD_READY state. */
+static int ready_num;
+
 /* List of all processes.  Processes are added to this list
    when they are first scheduled and removed when they exit. */
 static struct list all_list;
@@ -55,7 +58,7 @@ static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
 
 /* System load average */
-static int sys_load_avg;
+static fixed_point sys_load_avg;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -77,7 +80,7 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 static int thread_calculate_priority (struct thread *t);
-static int thread_calculate_recent_cpu (struct thread *t);
+static fixed_point thread_calculate_recent_cpu (struct thread *t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -101,6 +104,7 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
 
+  ready_num = 0;
   sys_load_avg = 0;
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -216,7 +220,6 @@ thread_create (const char *name, int priority,
 #ifdef USERPROG
   t->parent = thread_current ();
   list_push_back (&t->parent->child_threads, &t->child_elem);
-
 #endif
 
   intr_set_level (old_level);
@@ -264,6 +267,7 @@ thread_unblock (struct thread *t)
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
   list_push_back (&ready_list, &t->elem);
+  ready_num += 1;
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -334,7 +338,10 @@ thread_yield (void)
 
   old_level = intr_disable ();
   if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+    {
+      list_push_back (&ready_list, &cur->elem);
+      ready_num += 1;
+    }
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -363,7 +370,7 @@ void
 thread_set_priority (int new_priority) 
 {
   thread_current ()->priority = new_priority;
-  if (!list_empty (&ready_list) && 
+  if (ready_num != 0 && 
     thread_get_priority_thread (highest_priority_thread (&ready_list, false))
       > thread_get_priority ())
     thread_yield ();
@@ -390,7 +397,7 @@ int
 thread_get_priority_thread (struct thread *t)
 {
   ASSERT (is_thread (t));
-  return t->priority > t->donatedpriority ? t->priority : t->donatedpriority; 
+  return t->priority > t->donatedpriority ? t->priority : t->donatedpriority;
 }
 
 /* Sets the current thread's nice value to NICE and recalculates the 
@@ -431,8 +438,11 @@ thread_get_recent_cpu (void)
 static int 
 thread_calculate_priority (struct thread *t) 
 {
-  int priority_f = FLOAT (PRI_MAX) - FDIVI (t->recent_cpu, 4) - FLOAT (t->nice * 2);
+  fixed_point priority_f = FLOAT (PRI_MAX) - FDIVI (t->recent_cpu, 4)
+                            - FLOAT (t->nice * 2);
   int priority = INT (priority_f);
+
+  /* Clamp the value between PRI_MAX and PRI_MIN. */
   if (priority > PRI_MAX) 
     priority = PRI_MAX;
   else if (priority < PRI_MIN)
@@ -442,10 +452,11 @@ thread_calculate_priority (struct thread *t)
 
 /* Calculates the recent_cpu of the given thread, returns the value
   with fixed-point representation */
-static int
+static fixed_point
 thread_calculate_recent_cpu (struct thread *t)
 {
-  int coeff = FDIVF (FMULI (sys_load_avg, 2), FADDI (FMULI (sys_load_avg, 2), 1));
+  fixed_point coeff = FDIVF (FMULI (sys_load_avg, 2), 
+                      FADDI (FMULI (sys_load_avg, 2), 1));
   return FADDI (FMULF (coeff, t->recent_cpu), t->nice);
 }
 
@@ -454,7 +465,7 @@ void
 update_sys_load_avg (void) 
 {
   /* Ready threads includes the one is currently running except idle */
-  int ready_threads = list_size (&ready_list);
+  int ready_threads = ready_num;
   if (thread_current () != idle_thread)
     ready_threads += 1;
   sys_load_avg = FMULF (FDIVF (FLOAT (59), FLOAT (60)), sys_load_avg) +
@@ -582,6 +593,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->donatedpriority = PRI_MIN;
   t->blockedby = NULL;
   t->magic = THREAD_MAGIC;
+  t->lock_acquiring = NULL;
   list_init (&t->holdinglocks);
   sema_init (&t->sleepsema, 0);
 
@@ -593,6 +605,7 @@ init_thread (struct thread *t, const char *name, int priority)
   list_init (&t->openfds);
   list_init (&t->child_threads);
   sema_init (&t->wait_child_sema, 0);
+  sema_init (&t->wait_par_sema, 0);
   sema_init (&t->wait_load, 0);
 #endif
 
@@ -620,10 +633,13 @@ alloc_frame (struct thread *t, size_t size)
 static struct thread *
 next_thread_to_run (void) 
 {
-  if (list_empty (&ready_list))
+  if (ready_num == 0)
     return idle_thread;
   else
-    return highest_priority_thread (&ready_list, true);
+    {
+      ready_num -= 1;
+      return highest_priority_thread (&ready_list, true);
+    }
 }
 
 /* Completes a thread switch by activating the new thread's page
@@ -665,7 +681,7 @@ thread_schedule_tail (struct thread *prev)
      pull out the rug under itself.  (We don't free
      initial_thread because its memory was not obtained via
      palloc().) */
-  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
+  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread)
     {
       ASSERT (prev != cur);
       palloc_free_page (prev);
@@ -722,7 +738,7 @@ thread_wakeuptick_less (const struct list_elem *a,
   struct thread *t1 = list_entry (a, struct thread, sleeplistelem);
   struct thread *t2 = list_entry (b, struct thread, sleeplistelem);
   
-  return t1->wakeuptick < t2->wakeuptick;
+  return t1->wakeup_tick < t2->wakeup_tick;
 } 
 
 /* Compares two thread's priority, used in list_insert_ordered */
@@ -737,7 +753,8 @@ thread_priority_higher (const struct list_elem *a,
   return thread_get_priority_thread (t1) > thread_get_priority_thread (t2);
 }
 
-/* Pop the thread with highest priority in the given list */
+/* Get the thread with highest priority in the given list, if delete is 
+ set to true, the thread is removed from the list. */
 struct thread *
 highest_priority_thread (struct list *thread_list, bool delete)
 {
@@ -765,6 +782,7 @@ highest_priority_thread (struct list *thread_list, bool delete)
   return highest_priority;
 }
 
+#ifdef USERPROG
 /* Get the thread with thread tid `threadtid`. Returns NULL on error */
 struct thread *
 get_child_thread (struct thread *t, tid_t threadtid)
@@ -793,11 +811,10 @@ remove_child_thread (struct thread *t, tid_t threadtid)
   ASSERT (child->exited);
   ASSERT (child->status == THREAD_BLOCKED)
 
-  thread_unblock (child);
+  sema_up (&child->wait_par_sema);
   list_remove (&child->child_elem);
 }
 
-#ifdef USERPROG
 /* Get the next file descriptor in thread t. */
 int 
 thread_nextfd (struct thread *t)
