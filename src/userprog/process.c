@@ -147,6 +147,7 @@ start_process (void *file_name_)
   t->load_success = true;
   sema_up (&t->wait_load);
 
+  /* Deny write for the elf file. */
   lock_acquire (&file_lock);
   t->elf = filesys_open (file_name);
   file_deny_write (t->elf);
@@ -183,16 +184,11 @@ process_wait (tid_t child_tid)
 
   if (!child)
     return -1;
-
-  if (child->exited)
-    {
-      ret_status = child->return_status;
-      remove_child_thread (cur, child_tid);
-      return ret_status;
-    }
   
   /* Keep waiting utill the child is exited. */
-  sema_down (&child->wait_child_sema);
+  if (!child->exited)
+    sema_down (&child->wait_child_sema);
+  
   ret_status = child->return_status;
   remove_child_thread (cur, child_tid);
 
@@ -207,7 +203,8 @@ process_exit (void)
   uint32_t *pd;
   char *dummy;
   enum intr_level old_level;
-
+  
+  /* Release the resources obtained by the process. */
   close_all_file (cur);
   clear_children_parent (cur);
 
@@ -224,6 +221,8 @@ process_exit (void)
 
   if (cur->elf)
     {
+      /* When page fault at reading filename, 
+       the lock is held by current thread. */
       if (!lock_held_by_current_thread (&file_lock))
         lock_acquire (&file_lock);
       file_allow_write (cur->elf);
@@ -264,7 +263,7 @@ process_exit (void)
   cur->exited = true;
   sema_up (&cur->wait_child_sema);
   if (cur->parent)
-    thread_block ();
+    sema_down (&cur->wait_par_sema);
 
   intr_set_level (old_level);
 }
@@ -650,7 +649,7 @@ clear_children_parent (struct thread *t)
       struct thread *child = list_entry (e, struct thread, child_elem);
 
       if (child->exited)
-        thread_unblock (child);
+        sema_up (&child->wait_par_sema);
       else 
         child->parent = NULL;
     }

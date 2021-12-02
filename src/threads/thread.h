@@ -5,7 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include "synch.h"
-#include "vm/page.h"
+#include "fixed-point.h"
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -27,7 +27,7 @@ typedef int tid_t;
 #define PRI_MAX 63                      /* Highest priority. */
 #define NICE_MIN -20                    /* Lowest nice. */
 #define NICE_MAX 20                     /* Highest nice. */
-// #define USERPROG
+
 /* Used in the openfds list in thread.h*/
 struct filefd 
   {
@@ -108,19 +108,19 @@ struct thread
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
+    int priority;                       /* Original priority. */
     int donatedpriority;                /* Priority donated by other threads */
     struct list_elem allelem;           /* List element for all threads list. */
     struct list_elem sleeplistelem;     /* List element for sleeping list. */
-    int64_t wakeuptick;                 /* The tick the thread wake up */
-    struct semaphore sleepsema;         /* Semaphore for blocking thread */
-    /* The thread holding resources acquired by this thread */
-    struct thread *blockedby;           
-    struct list holdinglocks;           /* Locks holding by the thread */
-
+    int64_t wakeup_tick;                /* The tick the thread wake up. */
+    struct semaphore sleepsema;         /* Semaphore for blocking thread. */
+    struct thread *blockedby;           /* The thread holding resources acquired by this thread. */
+    struct list holdinglocks;           /* Locks holding by the thread. */
+    struct lock *lock_acquiring;        /* The lock that the thread is acquiring. */
+    
     /* 4.4BSD Scheduler */
     int nice;                           /* Niceness of the thread */
-    int recent_cpu;                     /* Recent cpu usage of the thread */
+    fixed_point recent_cpu;             /* recent_cpu of the thread */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -128,25 +128,26 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-   
-   /* File descriptors opened by the thread. */
+    
+    /* File descriptors opened by the thread. */
     struct list openfds;
     int nextfd;
     
-    /* For process_wait and exit */
+    /* For process_wait and exit. */
     struct list child_threads;
     struct list_elem child_elem;
     struct thread *parent;
-    int return_status;
     struct semaphore wait_child_sema;
+    struct semaphore wait_par_sema;
+    int return_status;
     bool exited;
 
     /* For process_execute */
     struct semaphore wait_load;
     bool load_success;
 
+    /* For deny writing. */
     struct file *elf; 
-
 #endif
 
 #ifdef VM
@@ -190,11 +191,13 @@ void thread_yield (void);
 typedef void thread_action_func (struct thread *t, void *aux);
 void thread_foreach (thread_action_func *, void *);
 
+/* Priority scheduling */
 int thread_get_priority (void);
 void thread_set_priority (int);
 void thread_set_donatedpriority (int);
 int thread_get_priority_thread (struct thread *t);
 
+/* mlfqs scheduling */
 int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
@@ -204,6 +207,7 @@ void update_sys_load_avg (void);
 void update_thread_recent_cpu (void);
 void update_thread_priority (void);
 
+/* Utils for list container */
 bool thread_wakeuptick_less (const struct list_elem *a,
                              const struct list_elem *b,
                              void *aux UNUSED);
@@ -223,11 +227,6 @@ struct file *thread_get_file (struct thread *t, int fd);
 int thread_add_file (struct thread *t, struct file *f);
 void thread_remove_file (struct thread *t, int fd);
 int thread_nextfd (struct thread *t);
-int thread_nextmapid (struct thread *t);
-
-int thread_add_mmap (struct thread *t, struct file *fl, void *uaddr, size_t size);
-void *thread_munmap (struct thread *t, int mmapid, off_t *size, struct file **f);
-void thread_munmap_all (struct thread *t);
 
 bool is_thread (struct thread *);
 #endif /* threads/thread.h */
