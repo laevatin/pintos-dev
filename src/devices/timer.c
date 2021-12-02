@@ -103,8 +103,10 @@ timer_sleep (int64_t ticks)
   if (timer_elapsed (start) > ticks)
     return;
   
+  /* Set wake up tick and insert the thread to the sleeping list
+  and block the thread should be done atomically. */
   old_level = intr_disable ();
-  t->wakeuptick = start + ticks;
+  t->wakeup_tick = start + ticks;
   list_insert_ordered (&sleeping_list, &t->sleeplistelem, 
                         thread_wakeuptick_less, NULL);
   /* Block the thread */
@@ -194,28 +196,36 @@ timer_interrupt (struct intr_frame *args UNUSED)
       struct thread *t = list_entry (list_front (&sleeping_list), 
                                         struct thread, sleeplistelem);
 
-      /* No thread waiting to wake up */
-      if (t->wakeuptick > ticks) 
+      /* No thread waiting to wake up since the sleeping list is ordered. */
+      if (t->wakeup_tick > ticks) 
         break;
-      
       list_pop_front(&sleeping_list);
+      /* Unblock the thread. */
       sema_up(&t->sleepsema);
     }
   
   if (thread_mlfqs) 
     {
       struct thread *t = thread_current ();
+      enum intr_level old_level = intr_disable ();
+
+      /* Recent cpu calculation for the running thread. */
       if (t->status == THREAD_RUNNING)
         t->recent_cpu = FADDI (t->recent_cpu, 1);
       
+      /* Update system load average and all threads' recent cpu
+      every second. */
       if ((ticks % TIMER_FREQ) == 0)
         {
           update_sys_load_avg ();
           update_thread_recent_cpu ();
         }
       
+      /* Update all threads' priority every fourth clock. */
       if (ticks % 4 == 0)
         update_thread_priority ();
+      
+      intr_set_level (old_level);
     }
 }
 

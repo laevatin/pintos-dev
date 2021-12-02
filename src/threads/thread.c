@@ -24,6 +24,8 @@
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
+
+/* Number of processes in THREAD_READY state. */
 static int ready_num;
 
 /* List of all processes.  Processes are added to this list
@@ -53,7 +55,7 @@ static long long kernel_ticks;  /* # of timer ticks in kernel threads. */
 static long long user_ticks;    /* # of timer ticks in user programs. */
 
 /* System load average */
-static int sys_load_avg;
+static fixed_point sys_load_avg;
 
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
@@ -75,7 +77,7 @@ static void schedule (void);
 void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 static int thread_calculate_priority (struct thread *t);
-static int thread_calculate_recent_cpu (struct thread *t);
+static fixed_point thread_calculate_recent_cpu (struct thread *t);
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -387,7 +389,7 @@ int
 thread_get_priority_thread (struct thread *t)
 {
   ASSERT (is_thread (t));
-  return t->priority > t->donatedpriority ? t->priority : t->donatedpriority; 
+  return t->priority > t->donatedpriority ? t->priority : t->donatedpriority;
 }
 
 /* Sets the current thread's nice value to NICE and recalculates the 
@@ -428,8 +430,11 @@ thread_get_recent_cpu (void)
 static int 
 thread_calculate_priority (struct thread *t) 
 {
-  int priority_f = FLOAT (PRI_MAX) - FDIVI (t->recent_cpu, 4) - FLOAT (t->nice * 2);
+  fixed_point priority_f = FLOAT (PRI_MAX) - FDIVI (t->recent_cpu, 4)
+                            - FLOAT (t->nice * 2);
   int priority = INT (priority_f);
+
+  /* Clamp the value between PRI_MAX and PRI_MIN. */
   if (priority > PRI_MAX) 
     priority = PRI_MAX;
   else if (priority < PRI_MIN)
@@ -439,10 +444,11 @@ thread_calculate_priority (struct thread *t)
 
 /* Calculates the recent_cpu of the given thread, returns the value
   with fixed-point representation */
-static int
+static fixed_point
 thread_calculate_recent_cpu (struct thread *t)
 {
-  int coeff = FDIVF (FMULI (sys_load_avg, 2), FADDI (FMULI (sys_load_avg, 2), 1));
+  fixed_point coeff = FDIVF (FMULI (sys_load_avg, 2), 
+                      FADDI (FMULI (sys_load_avg, 2), 1));
   return FADDI (FMULF (coeff, t->recent_cpu), t->nice);
 }
 
@@ -456,7 +462,6 @@ update_sys_load_avg (void)
     ready_threads += 1;
   sys_load_avg = FMULF (FDIVF (FLOAT (59), FLOAT (60)), sys_load_avg) +
                 FDIVI (FLOAT (ready_threads), 60);
-  // printf ("\nupdate: %d\n", INT (sys_load_avg * 100));
 }
 
 /* Updates all thread's recent_cpu */
@@ -580,6 +585,7 @@ init_thread (struct thread *t, const char *name, int priority)
   t->donatedpriority = PRI_MIN;
   t->blockedby = NULL;
   t->magic = THREAD_MAGIC;
+  t->lock_acquiring = NULL;
   list_init (&t->holdinglocks);
   sema_init (&t->sleepsema, 0);
   list_push_back (&all_list, &t->allelem);
@@ -654,7 +660,7 @@ thread_schedule_tail (struct thread *prev)
      pull out the rug under itself.  (We don't free
      initial_thread because its memory was not obtained via
      palloc().) */
-  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread) 
+  if (prev != NULL && prev->status == THREAD_DYING && prev != initial_thread)
     {
       ASSERT (prev != cur);
       palloc_free_page (prev);
@@ -711,7 +717,7 @@ thread_wakeuptick_less (const struct list_elem *a,
   struct thread *t1 = list_entry (a, struct thread, sleeplistelem);
   struct thread *t2 = list_entry (b, struct thread, sleeplistelem);
   
-  return t1->wakeuptick < t2->wakeuptick;
+  return t1->wakeup_tick < t2->wakeup_tick;
 } 
 
 /* Compares two thread's priority, used in list_insert_ordered */
@@ -726,7 +732,8 @@ thread_priority_higher (const struct list_elem *a,
   return thread_get_priority_thread (t1) > thread_get_priority_thread (t2);
 }
 
-/* Pop the thread with highest priority in the given list */
+/* Get the thread with highest priority in the given list, if delete is 
+ set to true, the thread is removed from the list. */
 struct thread *
 highest_priority_thread (struct list *thread_list, bool delete)
 {
