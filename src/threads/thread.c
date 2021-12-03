@@ -803,8 +803,7 @@ get_child_thread (struct thread *t, tid_t threadtid)
 }
 
 /* Removes the child thread from the child_list. 
-  Child thread must be exited and this also unblocks the
-  child thread to let it exit completely. */
+  Child thread must be exited. */
 void
 remove_child_thread (struct thread *t, tid_t threadtid)
 {
@@ -812,10 +811,6 @@ remove_child_thread (struct thread *t, tid_t threadtid)
   enum intr_level old_level = intr_disable ();
   child = get_child_thread (t, threadtid);
 
-  ASSERT (child->exited);
-  ASSERT (child->status == THREAD_BLOCKED)
-
-  thread_unblock (child);
   list_remove (&child->child_elem);
 
   intr_set_level (old_level);

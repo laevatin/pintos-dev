@@ -57,10 +57,11 @@ process_execute (const char *file_name)
   t = get_child_thread (thread_current (), tid);
   sema_down (&t->wait_load);
   if (!t->load_success)
-    tid = TID_ERROR;
-
-  if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    {
+      remove_child_thread (thread_current (), tid);
+      tid = TID_ERROR;
+      palloc_free_page (fn_copy); 
+    }
 
   return tid;
 }

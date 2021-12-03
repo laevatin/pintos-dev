@@ -216,7 +216,10 @@ syscall_read (int *esp)
       if (!fl)
         return retval;
       lock_acquire (&file_lock);
+      if (!supt_preload_mem (thread_current ()->supt, buffer, esp, len))
+        exit(-1);
       retval = file_read (fl, buffer, len);
+      supt_unlock_mem (thread_current ()->supt, buffer, len);
       lock_release (&file_lock);
     }
 
@@ -244,7 +247,10 @@ syscall_write (int *esp)
         return retval;
 
       lock_acquire (&file_lock);
+      if (!supt_preload_mem (thread_current ()->supt, buffer, esp, len))
+        exit(-1);
       retval = file_write (fl, buffer, len);
+      supt_unlock_mem (thread_current ()->supt, buffer, len);
       lock_release (&file_lock);
     }
 
