@@ -47,7 +47,7 @@ struct supt_table
   };
 
 struct supt_table *supt_create (void);
-void supt_destroy (struct supt_table *table);
+void supt_destroy (struct supt_table *table, uint32_t *pd);
 bool supt_install_page (struct supt_table *table, void *uaddr, void *kaddr, 
                           enum page_state state);
 bool supt_install_filemap (struct supt_table *table, void *uaddr,  

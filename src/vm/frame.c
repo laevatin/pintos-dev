@@ -148,36 +148,6 @@ frame_free_page (void *kaddr)
   // printf ("freed %p\n", kaddr);
 }
 
-/* Delete a page already freed by palloc with kernel address 
-  kaddr using the frame allocator */
-void
-frame_delete_page (void *kaddr)
-{
-  struct frame_entry f;
-  struct hash_elem *e;
-  struct frame_entry *entry;
-
-  ASSERT (pg_ofs (kaddr) == 0);
-
-  f.kaddr = kaddr;
-  
-   // printf ("lock_acquire");
-  /* Remove the hash_elem with the same kaddr */
-  e = hash_delete (&frame_table, &f.elem);
-  ASSERT (e);
-
-  entry = hash_entry (e, struct frame_entry, elem);
-  list_remove (&entry->listelem);
-  // printf ("remove: %p\n", entry->uaddr);
-
-  if (&entry->listelem == clock)
-    next_clock ();
-
-  // printf("lock release\n");
-  free (entry);
-  // printf ("%s deleted %p\n", thread_current ()->name, kaddr);
-}
-
 /* Evict one frame to swap and get one free page */
 void *
 frame_evict_get (enum palloc_flags flags)

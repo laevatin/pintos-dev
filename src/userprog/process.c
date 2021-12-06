@@ -238,7 +238,7 @@ process_exit (void)
     some synchronization problems. If there is an interrupt
     and switch to another thread which is acquiring memory, 
     it may get a existing kaddr in frame table from palloc. */
-  supt_destroy (cur->supt);
+  supt_destroy (cur->supt, cur->pagedir);
   cur->supt = NULL;
 
   /* Destroy the current process's page directory and switch back

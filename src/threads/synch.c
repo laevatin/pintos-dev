@@ -277,7 +277,6 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
-  enum intr_level old_level;
   struct thread *cur = thread_current ();
 
   ASSERT (lock != NULL);

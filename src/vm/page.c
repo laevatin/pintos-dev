@@ -55,7 +55,7 @@ supt_create ()
 
 /* Destroy the supplemental page table. */
 void 
-supt_destroy (struct supt_table *table)
+supt_destroy (struct supt_table *table, uint32_t *pd)
 {
   struct hash_iterator i;
 
@@ -76,7 +76,10 @@ supt_destroy (struct supt_table *table)
           // printf ("free slot from destroy: %d\n", entry->swap_sector / 8);
         }
       else if (entry->state == PG_IN_MEM)
-        frame_delete_page (entry->kaddr);
+        {
+          pagedir_clear_page(pd, entry->uaddr);
+          frame_free_page (entry->kaddr);
+        }
     }
 
   hash_destroy (&table->supt_hash, entry_destory);
