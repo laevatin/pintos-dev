@@ -596,23 +596,13 @@ setup_stack (void **esp)
 {
   uint8_t *upage = ((uint8_t *) PHYS_BASE) - PGSIZE;
   uint8_t *kpage;
+  struct thread *t = thread_current ();
   bool success = false;
 
-  kpage = frame_get_page (upage, PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (upage, kpage, true);
-      if (success)
-        {
-          *esp = PHYS_BASE;
-          /* Avoid the frame to be evicted before installed to supt */
-          lock_acquire (&frame_lock);
-          frame_set_unlocked (kpage);
-          lock_release (&frame_lock);
-        }
-      else
-        frame_free_page (kpage);
-    }
+  success = supt_install_page (t->supt, upage, NULL, PG_ZERO); 
+  if (success)
+    *esp = PHYS_BASE;
+
   return success;
 }
 
