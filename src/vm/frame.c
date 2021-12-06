@@ -71,7 +71,7 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
 {
   void *kaddr; 
   struct frame_entry *entry;
-  bool locked_outside = true; // ugly
+  bool locked_outside = true;
 
   /* Must allocate from user pool */
   ASSERT (flags & PAL_USER);
@@ -80,7 +80,6 @@ frame_get_page (void *uaddr, enum palloc_flags flags)
   if (!lock_held_by_current_thread (&frame_lock))
     {
       lock_acquire (&frame_lock);
-      // printf ("lock_acquire");
       locked_outside = false;
     }
 
@@ -202,18 +201,17 @@ frame_select_eviction ()
 {
   int count = hash_size (&frame_table) * 2;
   struct frame_entry *entry;
-  // printf ("----------------------\n");
   while (count--)
     {
       next_clock ();
       entry = list_entry (clock, struct frame_entry, listelem);
-      // printf ("entry: %p\n", entry->uaddr);
       if (entry->locked)
         continue;
-      else if (pagedir_is_accessed (entry->t->pagedir, entry->uaddr)) {
-        pagedir_set_accessed (entry->t->pagedir, entry->uaddr, false);
-        continue;
-      }
+      else if (pagedir_is_accessed (entry->t->pagedir, entry->uaddr)) 
+        {
+          pagedir_set_accessed (entry->t->pagedir, entry->uaddr, false);
+          continue;
+        }
       return entry;
     }
   

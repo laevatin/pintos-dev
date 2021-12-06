@@ -33,51 +33,42 @@ swap_init ()
   bitmap_set_all(swap.swap_used_map, false);
 }
 
-/* Write the page in uaddr to swap partition */
-block_sector_t
-write_to_swap (void *addr)
+block_sector_t 
+swap_get_slot () 
 {
-  block_sector_t start;
-  size_t available;
-  size_t idx;
-
-  // ASSERT (is_user_vaddr (addr));
-  ASSERT (pg_ofs (addr) == 0);
-  available = bitmap_scan (swap.swap_used_map, 0, 1, false);
-
+  size_t available = bitmap_scan (swap.swap_used_map, 0, 1, false);
   /* No available swap space */
-  if (available == BITMAP_ERROR)
-    return -1;
-
-  start = available * SECTORS_PG;
-
-  /* Write SECTORS_PG block sectors consecutively */
-  for (idx = 0; idx < SECTORS_PG; idx++)
-    block_write (swap.swap_block, start + idx, 
-                  (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
-  
-  // printf ("add slot: %d %p |\n", available, addr);
-
+  ASSERT (available != BITMAP_ERROR);
   bitmap_set (swap.swap_used_map, available, true);
-
-  return start;
+  return available * SECTORS_PG;
 }
 
-/* Read the page in swap partition to addr, free the swap slot */
-void 
-read_from_swap (block_sector_t sector, void *addr)
+/* Write the page in uaddr to swap partition */
+void
+swap_write (block_sector_t sector, void *addr)
 {
   size_t idx;
 
-  ASSERT (sector != 0xFFFFFFFF && sector != 0xFFFFFFFE);
+  ASSERT (sector != SWAP_SECTOR_INIT);
   ASSERT (pg_ofs (addr) == 0);
+  /* Write SECTORS_PG block sectors consecutively */
+  for (idx = 0; idx < SECTORS_PG; idx++)
+    block_write (swap.swap_block, sector + idx, 
+                  (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
+}
 
+/* Read the page in swap partition to addr */
+void 
+swap_read (block_sector_t sector, void *addr)
+{
+  size_t idx;
+
+  ASSERT (sector != SWAP_SECTOR_INIT);
+  ASSERT (pg_ofs (addr) == 0);
+  /* Read SECTORS_PG block sectors consecutively */
   for (idx = 0; idx < SECTORS_PG; idx++)
     block_read (swap.swap_block, sector + idx, 
                   (void *)((char *)addr + (BLOCK_SECTOR_SIZE * idx)));
-  
-  free_swap_slot (sector);
-  // printf ("free slot: %d %p |\n", sector / SECTORS_PG, addr);
 }
 
 /* free the swap slot */
@@ -85,7 +76,6 @@ void
 free_swap_slot (block_sector_t sector) 
 {
   size_t available = sector / SECTORS_PG;
-
   ASSERT (bitmap_test (swap.swap_used_map, available))
   bitmap_set (swap.swap_used_map, available, false);
 }

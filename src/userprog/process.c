@@ -595,7 +595,6 @@ static bool
 setup_stack (void **esp) 
 {
   uint8_t *upage = ((uint8_t *) PHYS_BASE) - PGSIZE;
-  uint8_t *kpage;
   struct thread *t = thread_current ();
   bool success = false;
 

@@ -71,12 +71,12 @@ supt_destroy (struct supt_table *table, uint32_t *pd)
       struct supt_entry *entry = hash_entry (hash_cur (&i), 
                                             struct supt_entry, elem);
       if (entry->state == PG_IN_SWAP)
-        {
-          free_swap_slot (entry->swap_sector);
-          // printf ("free slot from destroy: %d\n", entry->swap_sector / 8);
-        }
+        free_swap_slot (entry->swap_sector);
       else if (entry->state == PG_IN_MEM)
         {
+          if (entry->swap_sector != SWAP_SECTOR_INIT) 
+            free_swap_slot (entry->swap_sector);
+
           pagedir_clear_page(pd, entry->uaddr);
           frame_free_page (entry->kaddr);
         }
@@ -107,10 +107,9 @@ supt_install_page (struct supt_table *table, void *uaddr, void *kaddr,
 
   ASSERT (uaddr == pg_round_down (uaddr));
   lock_acquire (&table->supt_lock);
-  // printf ("%d installed: %p \n", thread_current ()->tid, uaddr);
 
   entry->uaddr = uaddr;
-  entry->swap_sector = -1;
+  entry->swap_sector = SWAP_SECTOR_INIT;
   entry->state = state;
   entry->dirty = false;
   entry->filefrom = NULL;
@@ -254,8 +253,7 @@ supt_load_page (struct supt_table *table, void *uaddr)
       break;
     case PG_IN_SWAP:
       kaddr = frame_get_page (uaddr, PAL_USER);
-      read_from_swap (entry->swap_sector, kaddr);
-      entry->swap_sector = -1;
+      swap_read (entry->swap_sector, kaddr);
       break;
     case PG_FILE_MAPPED:
       kaddr = frame_get_page (uaddr, PAL_USER | PAL_ZERO);
@@ -331,25 +329,24 @@ supt_set_swap (struct thread *t, void *uaddr)
     {
       entry->state = PG_IN_SWAP;
       /* Here must write the kernel address since the thread pagedir may change */
-      entry->swap_sector = write_to_swap (entry->kaddr);
+      if (entry->swap_sector == SWAP_SECTOR_INIT)
+        {
+          entry->swap_sector = swap_get_slot ();
+          /* Force to write to swap */
+          entry->dirty = true;
+        }
+      
+      /* Only write dirty page */
+      if (entry->dirty)
+        swap_write (entry->swap_sector, entry->kaddr);
     }
   else 
     {
       struct supt_file *sf = entry->filefrom;
-      /* Not used and not the error number */
-      entry->swap_sector = 0xFFFFFFFE;
       entry->state = PG_FILE_MAPPED;
       if (entry->dirty)
         file_write_at (sf->fl, entry->kaddr, sf->size_in_page, sf->offset);
     }
-
-  /* Hard to recover */
-  ASSERT (entry->swap_sector != 0xFFFFFFFF);
-  // if (entry->swap_sector == 0xFFFFFFFF)
-  //   {
-  //     entry->state = PG_IN_MEM;
-  //     return false;
-  //   }
 
   /* The order is crucial */
   pagedir_clear_page (t->pagedir, uaddr);
