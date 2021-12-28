@@ -147,6 +147,14 @@ start_process (void *file_name_)
 
   t->load_success = true;
   sema_up (&t->wait_load);
+  
+#ifdef FILESYS
+  /* Inherit from parent's pwd */
+  if (t->parent && t->parent->pwd)
+    t->pwd = dir_reopen (t->parent->pwd);
+  else 
+    t->pwd = dir_open_root ();
+#endif
 
   /* Deny write for the elf file. */
   lock_acquire (&file_lock);
@@ -209,13 +217,14 @@ process_exit (void)
   close_all_file (cur);
   clear_children_parent (cur);
 
+#ifdef FILESYS
+  /* Close the directory */
+  if (cur->pwd)
+    dir_close (cur->pwd);
+#endif
+
   strtok_r (cur->name, " ", &dummy);
   printf ("%s: exit(%d)\n", cur->name, cur->return_status);
-
-  // if (cur->return_status == -1)
-  //   debug_backtrace ();
-
-  /* RELEASE ALL THE LOCKS */
 
   /* Unmap all the memory map areas */
   thread_munmap_all (cur);
@@ -556,30 +565,36 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
-      /* Get a page of memory. */
-      uint8_t *kpage = frame_get_page (upage, PAL_USER);
-      if (kpage == NULL)
-        return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+      /* Lazy load all zero bytes */
+      if (page_read_bytes == 0)
+          supt_install_page (thread_current ()->supt, upage, NULL, PG_ZERO);
+      else 
         {
-          frame_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
+          /* Get a page of memory. */
+          uint8_t *kpage = frame_get_page (upage, PAL_USER);
+          if (kpage == NULL)
+            return false;
 
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          frame_free_page (kpage);
-          return false; 
+          /* Load this page. */
+          if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
+            {
+              frame_free_page (kpage);
+              return false; 
+            }
+          memset (kpage + page_read_bytes, 0, page_zero_bytes);
+
+          /* Add the page to the process's address space. */
+          if (!install_page (upage, kpage, writable)) 
+            {
+              frame_free_page (kpage);
+              return false; 
+            }
+          
+          /* Avoid the frame to be evicted before installed to supt */
+          lock_acquire (&frame_lock);
+          frame_set_unlocked (kpage);
+          lock_release (&frame_lock);
         }
-      
-      /* Avoid the frame to be evicted before installed to supt */
-      lock_acquire (&frame_lock);
-      frame_set_unlocked (kpage);
-      lock_release (&frame_lock);
 
       /* Advance. */
       read_bytes -= page_read_bytes;

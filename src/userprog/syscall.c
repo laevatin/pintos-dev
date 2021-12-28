@@ -4,6 +4,11 @@
 #include <string.h>
 #include "vm/page.h"
 #include "vm/frame.h"
+#include "filesys/inode.h"
+
+/* The value should be synched with the value 
+  in /lib/user/syscall.h */
+#define READDIR_MAX_LEN 14
 
 static void syscall_handler (struct intr_frame *f);
 
@@ -43,6 +48,11 @@ syscall_init (void)
   syscall_vec[SYS_CLOSE   ] = syscall_close;
   syscall_vec[SYS_MMAP    ] = syscall_mmap;
   syscall_vec[SYS_MUNMAP  ] = syscall_munmap;
+  syscall_vec[SYS_CHDIR   ] = syscall_chdir;  /* Change the current directory. */
+  syscall_vec[SYS_MKDIR   ] = syscall_mkdir;  /* Create a directory. */
+  syscall_vec[SYS_READDIR ] = syscall_readdir;/* Reads a directory entry. */
+  syscall_vec[SYS_ISDIR   ] = syscall_isdir;   /* Tests if a fd represents a directory. */
+  syscall_vec[SYS_INUMBER ] = syscall_inumber; /* Returns the inode number for a fd. */
 }
 
 /* Entry of system call. */
@@ -128,7 +138,7 @@ syscall_create (int *esp)
     return retval;
 
   lock_acquire (&file_lock);
-  retval = (uint32_t)filesys_create (filename, initsize);
+  retval = (uint32_t)filesys_create (filename, initsize, true);
   lock_release (&file_lock);
 
   return retval;
@@ -215,9 +225,11 @@ syscall_read (int *esp)
       struct file *fl = thread_get_file (thread_current (), fd);
       if (!fl)
         return retval;
-      lock_acquire (&file_lock);
+      
+      /* Get the memory area needed in read in advance */
       if (!supt_preload_mem (thread_current ()->supt, buffer, esp, len))
         exit(-1);
+      lock_acquire (&file_lock);
       retval = file_read (fl, buffer, len);
       supt_unlock_mem (thread_current ()->supt, buffer, len);
       lock_release (&file_lock);
@@ -243,12 +255,12 @@ syscall_write (int *esp)
   else 
     {
       struct file *fl = thread_get_file (thread_current (), fd);
-      if (!fl)
+      if (!fl || !inode_is_file (file_get_inode (fl)))
         return retval;
-
-      lock_acquire (&file_lock);
+      /* Get the memory area needed in write in advance */
       if (!supt_preload_mem (thread_current ()->supt, buffer, esp, len))
         exit(-1);
+      lock_acquire (&file_lock);
       retval = file_write (fl, buffer, len);
       supt_unlock_mem (thread_current ()->supt, buffer, len);
       lock_release (&file_lock);
@@ -405,4 +417,64 @@ syscall_munmap (int *esp)
   file_close (fl);
   lock_release (&file_lock);
   return 0;
+}
+
+/* change directory */
+uint32_t 
+syscall_chdir (int *esp)
+{
+  const char *target = (const char *) ARG1 (esp);
+  return filesys_chdir (target);
+}
+
+/* make directory */
+uint32_t 
+syscall_mkdir (int *esp)
+{
+  const char *file_name = (const char *) ARG1(esp);
+  if (file_name[0] == '\0')
+    return 0;
+  return (uint32_t)filesys_create (file_name, 320, false);
+}
+
+/* read directory */
+uint32_t 
+syscall_readdir (int *esp)
+{
+  int fd = ARG1 (esp);
+  char *file_name = (char *) ARG2 (esp);
+  if (strnlen (file_name, READDIR_MAX_LEN + 1) > READDIR_MAX_LEN)
+    return 0;
+  
+  struct file *fl = thread_get_file (thread_current (), fd);
+  if (!fl || !file_is_directory (fl)) 
+    return 0;
+  
+  return file_get_filename (fl, file_name);
+}
+
+/* is fd a directory? */
+uint32_t 
+syscall_isdir (int *esp)
+{
+  int fd = ARG1 (esp);
+  struct file *fl = thread_get_file (thread_current (), fd);
+
+  if (!fl)
+    return 0;
+  
+  return file_is_directory (fl);
+}
+
+/* get the inode number */
+uint32_t 
+syscall_inumber (int *esp)
+{
+  int fd = ARG1 (esp);
+  struct file *fl = thread_get_file (thread_current (), fd);
+
+  if (!fl)
+    return 0;
+
+  return inode_get_inumber (file_get_inode (fl));
 }

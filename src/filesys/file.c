@@ -2,7 +2,7 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
-#include <list.h>
+#include "filesys/directory.h"
 
 /* An open file. */
 struct file 
@@ -10,6 +10,8 @@ struct file
     struct inode *inode;        /* File's inode. */
     off_t pos;                  /* Current position. */
     bool deny_write;            /* Has file_deny_write() been called? */
+    /* If a file is a directory, this should be set */
+    struct dir *dir;
   };
 
 /* Opens a file for the given INODE, of which it takes ownership,
@@ -24,6 +26,8 @@ file_open (struct inode *inode)
       file->inode = inode;
       file->pos = 0;
       file->deny_write = false;
+      if (!inode_is_file (file->inode)) 
+        file->dir = dir_open (inode_reopen (file->inode));
       return file;
     }
   else
@@ -48,6 +52,9 @@ file_close (struct file *file)
 {
   if (file != NULL)
     {
+      if (!inode_is_file (file->inode)) 
+        dir_close (file->dir);
+
       file_allow_write (file);
       inode_close (file->inode);
       free (file); 
@@ -166,4 +173,31 @@ file_tell (struct file *file)
 {
   ASSERT (file != NULL);
   return file->pos;
+}
+
+/* Is the `file` a directory */
+bool
+file_is_directory (struct file *file)
+{
+  ASSERT (file != NULL);
+  return !inode_is_file (file->inode);
+}
+
+/* get one filename from directory */
+bool
+file_get_filename (struct file *file, char *filename)
+{
+  ASSERT (file_is_directory (file));
+
+  return dir_readdir (file->dir, filename);
+}
+
+/* Get the struct dir from file, the file must be
+   a directory */
+struct dir * 
+file_get_dir (struct file *file)
+{
+  ASSERT (file_is_directory (file))
+
+  return file->dir;
 }
