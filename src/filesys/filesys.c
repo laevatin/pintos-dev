@@ -4,6 +4,7 @@
 #include <string.h>
 #include "filesys/file.h"
 #include "filesys/free-map.h"
+#include "filesys/cache.h"
 #include "filesys/inode.h"
 #include "filesys/directory.h"
 #include "threads/thread.h"
@@ -90,6 +91,7 @@ filesys_init (bool format)
 
   inode_init ();
   free_map_init ();
+  cache_init ();
 
   if (format) 
     do_format ();
@@ -103,6 +105,7 @@ void
 filesys_done (void) 
 {
   free_map_close ();
+  cache_clear ();
 }
 
 /* Creates a file or directory named NAME with 
