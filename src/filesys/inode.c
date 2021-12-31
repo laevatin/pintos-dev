@@ -49,13 +49,13 @@ bytes_to_sectors (off_t size)
 {
   return DIV_ROUND_UP (size, BLOCK_SECTOR_SIZE);
 }
-
+/* Returns the index of big_indirect_block the block within. */
 static inline size_t
 indirect_block_index (size_t indirect_used)
 {
   return indirect_used / INDIRECT_TOTAL_ENTRIES;
 }
-
+/* Return the offset index of the block in a big_block. */ 
 static inline size_t
 indirect_block_offset (size_t indirect_used)
 {
@@ -127,6 +127,7 @@ byte_to_sector (struct inode *inode, off_t pos)
       return inode->data.direct[offset];
     }
 
+  /* The position is in the indirect blocks*/
   block_sector_t *indirect_block = palloc_get_page (PAL_ASSERT);
   size_t sector_num = pos / BLOCK_SECTOR_SIZE - DIRECT_MAP_BLOCKS;
   size_t index = indirect_block_index (sector_num);
