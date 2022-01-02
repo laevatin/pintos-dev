@@ -611,6 +611,10 @@ init_thread (struct thread *t, const char *name, int priority)
   sema_init (&t->wait_load, 0);
 #endif
 
+#ifdef FILESYS
+  t->pwd = NULL;
+#endif
+
   list_push_back (&all_list, &t->allelem);
 }
 
@@ -944,7 +948,6 @@ thread_munmap_all (struct thread *t)
       e = list_pop_front (&t->mmap_list);
       mf = list_entry (e, struct mmapfile, elem);
       supt_remove_filemap (t->supt, mf->uaddr, mf->size);
-      /* Synchronization? */
       file_close (mf->f);
       free (mf);
     }

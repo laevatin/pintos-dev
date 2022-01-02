@@ -16,7 +16,7 @@
 #include "filesys/off_t.h"
 #include "filesys/directory.h"
 
-#define SYSCALLNUM 15
+#define SYSCALLNUM 20
 /* Used in process.c when process exit */
 void close_all_file (struct thread *t);
 void exit (int status);
@@ -40,5 +40,10 @@ uint32_t syscall_tell (int *);
 uint32_t syscall_close (int *);
 uint32_t syscall_mmap (int *);
 uint32_t syscall_munmap (int *);
+uint32_t syscall_chdir (int *);  
+uint32_t syscall_mkdir (int *);  
+uint32_t syscall_readdir (int *);
+uint32_t syscall_isdir (int *);  
+uint32_t syscall_inumber (int *);
 
 #endif /* userprog/syscall.h */

@@ -100,6 +100,7 @@ fsutil_extract (char **argv UNUSED)
 
       /* Read and parse ustar header. */
       block_read (src, sector++, header);
+
       error = ustar_parse_header (header, &file_name, &type, &size);
       if (error != NULL)
         PANIC ("bad ustar header in sector %"PRDSNu" (%s)", sector - 1, error);
@@ -118,7 +119,7 @@ fsutil_extract (char **argv UNUSED)
           printf ("Putting '%s' into the file system...\n", file_name);
 
           /* Create destination file. */
-          if (!filesys_create (file_name, size))
+          if (!filesys_create (file_name, size, true))
             PANIC ("%s: create failed", file_name);
           dst = filesys_open (file_name);
           if (dst == NULL)
@@ -215,7 +216,7 @@ fsutil_append (char **argv)
      them, though, in case we have more files to append. */
   memset (buffer, 0, BLOCK_SECTOR_SIZE);
   block_write (dst, sector, buffer);
-  block_write (dst, sector, buffer + 1);
+  block_write (dst, sector + 1, buffer);
 
   /* Finish up. */
   file_close (src);

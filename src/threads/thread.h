@@ -160,6 +160,9 @@ struct thread
 #endif
     void *esp;                          /* Saved esp when in kernel mode */
 
+#ifdef FILESYS
+    struct dir *pwd;
+#endif
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
